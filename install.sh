@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 DEFAULT_REPO_DIR="$HOME/Developer/GitHub/alfred"
 REPO_DIR="${ALFRED_REPO_DIR:-$DEFAULT_REPO_DIR}"
 DATA_DIR="${ALFRED_DATA_DIR:-$HOME/Library/Application Support/Alfred}"
-REPO_URL="${ALFRED_REPO_URL:-https://github.com/sinapsysxyz/alfred.git}"
+REPO_SLUG="${ALFRED_REPO_SLUG:-sinapsysxyz/alfred}"
 BRANCH="${ALFRED_REPO_BRANCH:-main}"
 MODE="prod"
 INSTALL_LAUNCHD=0
@@ -27,7 +28,8 @@ usage() {
 Usage: bash install.sh [options]
 
 Canonical Alfred installer entrypoint for a fresh machine or an existing checkout.
-It clones Alfred if needed, then hands off to Alfred's repo-local installer.
+It authenticates with GitHub if needed, clones the private Alfred repo, then hands off
+to Alfred's repo-local installer.
 
 Options:
   --repo-dir PATH         Target repo path (default: $DEFAULT_REPO_DIR)
@@ -40,11 +42,53 @@ Options:
   --with-openclaw         Show and prepare the optional OpenClaw integration path
   --summary               Print resolved install plan and exit
   --help, -h              Show this help
+
+Environment:
+  GITHUB_TOKEN            GitHub token with read access to $REPO_SLUG
 EOF
 }
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1. Install prerequisites with: brew install git node@22 pnpm"
+}
+
+can_prompt() {
+  [ -t 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]
+}
+
+ensure_github_cli() {
+  if command -v gh >/dev/null 2>&1; then
+    return
+  fi
+
+  command -v brew >/dev/null 2>&1 || fail "GitHub CLI is required to fetch the private Alfred repo. Install Homebrew and run 'brew install gh', or install gh manually."
+
+  say "Installing GitHub CLI via Homebrew"
+  brew install gh
+}
+
+ensure_github_auth() {
+  if gh auth status >/dev/null 2>&1; then
+    say "GitHub CLI already authenticated"
+    gh auth setup-git >/dev/null 2>&1 || true
+    return
+  fi
+
+  if [ -z "$GITHUB_TOKEN" ]; then
+    if ! can_prompt; then
+      fail "GitHub authentication is required to fetch $REPO_SLUG. Re-run with GITHUB_TOKEN set to a token that has repo read access."
+    fi
+
+    printf '  GitHub token for %s: ' "$REPO_SLUG" > /dev/tty
+    read -rs GITHUB_TOKEN < /dev/tty || true
+    printf '\n' > /dev/tty
+
+    [ -n "$GITHUB_TOKEN" ] || fail "GitHub token is required to fetch the private Alfred repo."
+  fi
+
+  say "Authenticating GitHub CLI"
+  gh auth login --hostname github.com --with-token <<< "$GITHUB_TOKEN" >/dev/null
+  gh auth setup-git >/dev/null 2>&1 || true
 }
 
 while [ "$#" -gt 0 ]; do
@@ -112,17 +156,23 @@ launchd=$INSTALL_LAUNCHD
 fresh_db=$FRESH_DB
 migrate_db=${MIGRATE_DB_PATH:-}
 with_openclaw=$WITH_OPENCLAW
-repo_url=$REPO_URL
+repo_slug=$REPO_SLUG
 EOF
   exit 0
 fi
 
+ensure_github_cli
+ensure_github_auth
 need_cmd git
 mkdir -p "$(dirname "$REPO_DIR")" "$DATA_DIR"
 
 if [ ! -d "$REPO_DIR/.git" ]; then
-  say "Cloning Alfred into $REPO_DIR"
-  git clone --branch "$BRANCH" "$REPO_URL" "$REPO_DIR"
+  say "Cloning $REPO_SLUG into $REPO_DIR"
+  if [ -n "$BRANCH" ]; then
+    gh repo clone "$REPO_SLUG" "$REPO_DIR" -- --branch "$BRANCH"
+  else
+    gh repo clone "$REPO_SLUG" "$REPO_DIR"
+  fi
 else
   say "Repo already exists at $REPO_DIR"
 fi
