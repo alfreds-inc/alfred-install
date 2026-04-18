@@ -11,7 +11,7 @@ curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/ins
 ```
 
 The installer uses GitHub CLI to clone the private `sinapsysxyz/alfred` repo.
-If `gh` is not already authenticated, it prompts for a GitHub token with read access to that repo. The normal interactive flow then installs the Alfred prerequisites, prompts for `ANTHROPIC_API_KEY` / optional `OPENAI_API_KEY`, walks the OpenClaw Telegram/email wizard, and leaves you with the `alfred` CLI installed.
+If `gh` is not already authenticated, it prompts for a GitHub token with read access to that repo. The normal interactive flow then installs the Alfred prerequisites, prompts for `ANTHROPIC_API_KEY` / optional `OPENAI_API_KEY`, provisions the OpenClaw workspace, optionally configures Telegram, and leaves email setup for later with `alfred mail setup`.
 
 Advanced / CI alternative if you want to provide the GitHub token up front:
 
@@ -31,7 +31,7 @@ Advanced / CI modes:
 bash install.sh --dev
 bash install.sh --migrate-db ~/Documents/Empresa/_Index/finance_ops.sqlite
 bash install.sh --launchd
-bash install.sh --skip-openclaw-wizard        # CI: still provisions OpenClaw, skips interactive wizard
+bash install.sh --skip-openclaw-wizard        # CI: still provisions OpenClaw, skips interactive OpenClaw prompts
 ```
 
 The installer clones or reuses the Alfred repo under `~/.local/opt/alfred`, runs Alfred's host bootstrap plus product installer from that checkout, installs a user-local `alfred` launcher at `~/.local/bin/alfred`, and can prompt to add `~/.local/bin` to `~/.zshrc`. On first install with no Alfred DB it initializes a fresh local DB automatically. OpenClaw is mandatory — every install provisions the OpenClaw workspace under `~/.openclaw/workspace/alfred`.
