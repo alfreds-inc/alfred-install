@@ -2,7 +2,7 @@
 set -euo pipefail
 
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
-DEFAULT_REPO_DIR="$HOME/Developer/GitHub/alfred"
+DEFAULT_REPO_DIR="$HOME/.local/opt/alfred"
 REPO_DIR="${ALFRED_REPO_DIR:-$DEFAULT_REPO_DIR}"
 case "$(uname -s)" in
   Darwin) DEFAULT_DATA_DIR="$HOME/Library/Application Support/Alfred" ;;

@@ -19,7 +19,7 @@ case "$(uname -s)" in
   *)      OS_KIND="other"; DEFAULT_DATA_DIR="$HOME/.local/share/alfred" ;;
 esac
 
-REPO_DIR="${ALFRED_REPO_DIR:-$HOME/Developer/GitHub/alfred}"
+REPO_DIR="${ALFRED_REPO_DIR:-$HOME/.local/opt/alfred}"
 DATA_DIR="${ALFRED_DATA_DIR:-$DEFAULT_DATA_DIR}"
 WATCH_DIR="${ALFRED_WATCH_DIR:-$HOME/Documents/Alfred}"
 CLI_LAUNCHER_PATH="${ALFRED_CLI_LAUNCHER:-$HOME/.local/bin/alfred}"

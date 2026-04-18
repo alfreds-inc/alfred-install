@@ -34,7 +34,7 @@ bash install.sh --launchd
 bash install.sh --skip-openclaw-wizard        # CI: still provisions OpenClaw, skips interactive wizard
 ```
 
-The installer clones or reuses the Alfred repo, runs Alfred's repo-local bootstrap, installs a user-local `alfred` launcher at `~/.local/bin/alfred`, and can prompt to add `~/.local/bin` to `~/.zshrc`. On first install with no Alfred DB it initializes a fresh local DB automatically. OpenClaw is mandatory — every install provisions the OpenClaw workspace under `~/.openclaw/workspace/alfred`.
+The installer clones or reuses the Alfred repo under `~/.local/opt/alfred`, runs Alfred's repo-local bootstrap, installs a user-local `alfred` launcher at `~/.local/bin/alfred`, and can prompt to add `~/.local/bin` to `~/.zshrc`. On first install with no Alfred DB it initializes a fresh local DB automatically. OpenClaw is mandatory — every install provisions the OpenClaw workspace under `~/.openclaw/workspace/alfred`.
 
 ## Cleanup
 
