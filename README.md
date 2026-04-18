@@ -3,7 +3,7 @@
 Canonical machine bootstrap and cleanup for Alfred.
 
 Hosted architecture constraints live in:
-- `sinapsysxyz/alfred/docs/cloud_runtime_invariants.md`
+- `alfreds-inc/alfred/docs/cloud_runtime_invariants.md`
 
 This repo owns:
 - machine bootstrap
@@ -24,7 +24,7 @@ This repo does not own:
 Local self-host remains the default:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/alfreds-inc/alfred-install/main/install.sh | bash
 ```
 
 Equivalent explicit form:
@@ -33,7 +33,7 @@ Equivalent explicit form:
 bash install.sh --mode local
 ```
 
-Current local installs still fetch the private `sinapsysxyz/alfred` repo through GitHub CLI and delegate into the runtime repo installer. The runtime onboarding direction is moving toward browser-driven setup; this installer should not grow new terminal-first business configuration.
+Current local installs still fetch the private `alfreds-inc/alfred` repo through GitHub CLI and delegate into the runtime repo installer. The runtime onboarding direction is moving toward browser-driven setup; this installer should not grow new terminal-first business configuration.
 
 Useful local variants:
 
@@ -116,8 +116,8 @@ bash cleanup.sh -y
 Remote fallback:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- --dry-run
-curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- -y
+curl -fsSL https://raw.githubusercontent.com/alfreds-inc/alfred-install/main/cleanup.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/alfreds-inc/alfred-install/main/cleanup.sh | bash -s -- -y
 ```
 
 Cloud-aware cleanup behavior:

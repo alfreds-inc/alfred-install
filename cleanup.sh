@@ -3,7 +3,7 @@ set -euo pipefail
 # cleanup.sh — Full cleanup of Alfred from this machine.
 #
 # Canonical public entrypoint:
-#   curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/alfreds-inc/alfred-install/main/cleanup.sh | bash
 #
 # This script is STANDALONE — it does not depend on any other file in the repo,
 # so it keeps working even as it deletes the Alfred repo checkout itself.
@@ -705,7 +705,7 @@ else
   cat <<EOF
 
 Reinstall from scratch with:
-  curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/alfreds-inc/alfred-install/main/install.sh | bash
 
 EOF
 fi

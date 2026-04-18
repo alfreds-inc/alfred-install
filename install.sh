@@ -9,7 +9,7 @@ if [ -d "$HOME/.local/bin" ]; then
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
-REPO_SLUG="${ALFRED_REPO_SLUG:-sinapsysxyz/alfred}"
+REPO_SLUG="${ALFRED_REPO_SLUG:-alfreds-inc/alfred}"
 BRANCH="${ALFRED_REPO_BRANCH:-main}"
 MODE="${ALFRED_INSTALL_MODE:-local}"
 DEV_MODE=0
