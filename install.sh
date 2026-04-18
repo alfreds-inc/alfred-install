@@ -270,10 +270,12 @@ Options:
   --enrollment-token TOKEN Cloud mode only: one-time Alfred Cloud enrollment token
   --force-reenroll         Cloud mode only: ignore existing runtime cloud config and enroll again
   --skip-intelligence-wizard
-                           Deprecated. Local-only compatibility shim for current runtime installer.
-  --skip-entity-wizard     Deprecated. Local-only compatibility shim for current runtime installer.
+                           Deprecated no-op. Guided setup now runs after install via
+                           'alfred setup' and the focused Alfred CLI commands.
+  --skip-entity-wizard     Deprecated no-op. Entity setup moved out of the main installer.
   --telegram-token-file PATH
-                           Deprecated. Local-only compatibility shim for current runtime installer.
+                           Deprecated no-op. Run 'alfred telegram setup --telegram-token-file PATH'
+                           after install instead.
   --no-start               Install Alfred without starting services at the end
   --summary                Print resolved install plan and exit
   --help, -h               Show this help
@@ -536,13 +538,13 @@ persist_tunnel_config() {
 
 warn_deprecated_flags() {
   if [ "$USER_SET_SKIP_OPENCLAW_WIZARD" -eq 1 ]; then
-    warn "--skip-intelligence-wizard is deprecated and will be removed after the runtime browser onboarding transition."
+    warn "--skip-intelligence-wizard is deprecated and ignored. Guided setup now runs after install via 'alfred setup'."
   fi
   if [ "$USER_SET_SKIP_ENTITY_WIZARD" -eq 1 ]; then
-    warn "--skip-entity-wizard is deprecated and will be removed after the runtime browser onboarding transition."
+    warn "--skip-entity-wizard is deprecated and ignored. Run 'alfred entities setup' after install if you need it."
   fi
   if [ "$USER_SET_TELEGRAM_TOKEN_FILE" -eq 1 ]; then
-    warn "--telegram-token-file is deprecated and will be removed after the runtime browser onboarding transition."
+    warn "--telegram-token-file is deprecated and ignored during install. Run 'alfred telegram setup --telegram-token-file PATH' after install."
   fi
 }
 
@@ -561,10 +563,6 @@ validate_args() {
 
   if [ -n "$MIGRATE_DB_PATH" ] && [ ! -f "$MIGRATE_DB_PATH" ]; then
     fail "Migration source not found: $MIGRATE_DB_PATH"
-  fi
-
-  if [ -n "$TELEGRAM_TOKEN_FILE" ] && [ ! -r "$TELEGRAM_TOKEN_FILE" ]; then
-    fail "Telegram token file not readable: $TELEGRAM_TOKEN_FILE"
   fi
 
   if [ "$MODE" = "cloud" ]; then
@@ -983,9 +981,6 @@ invoke_runtime_install() {
   fi
   if [ "$MODE" = "local" ] && [ "$SKIP_ENTITY_WIZARD" -eq 1 ]; then
     install_args+=(--skip-entity-wizard)
-  fi
-  if [ "$MODE" = "local" ] && [ -n "$TELEGRAM_TOKEN_FILE" ]; then
-    install_args+=(--telegram-token-file "$TELEGRAM_TOKEN_FILE")
   fi
   if [ "$SKIP_START" -eq 1 ]; then
     install_args+=(--no-start)

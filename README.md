@@ -33,7 +33,18 @@ Equivalent explicit form:
 bash install.sh --mode local
 ```
 
-Current local installs still fetch the private `alfreds-inc/alfred` repo through GitHub CLI and delegate into the runtime repo installer. The runtime onboarding direction is moving toward browser-driven setup; this installer should not grow new terminal-first business configuration.
+Current local installs still fetch the private `alfreds-inc/alfred` repo through
+GitHub CLI and delegate into the runtime repo installer. The installer stops
+after the core stack is ready, then hands product setup off to Alfred's guided
+CLI commands:
+
+```bash
+alfred setup
+alfred configure
+alfred telegram setup
+alfred mail setup
+alfred entities setup
+```
 
 Useful local variants:
 

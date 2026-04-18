@@ -29,7 +29,8 @@ It does not own:
 - `local` is the default install mode
 - `cloud` is explicit and infra-only
 - cloud mode is Linux-only in v1
-- browser onboarding is the primary product setup path
+- local installs hand product setup off to `alfred setup` and focused CLI commands
+- cloud onboarding remains browser-led
 
 ## Keep Stable
 
