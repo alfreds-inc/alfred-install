@@ -40,7 +40,6 @@ if [ -t 1 ]; then
   C_DIM=$'\033[2m'
   C_RED=$'\033[31m'
   C_BOLD=$'\033[1m'
-  SHOW_LOADER=1
 else
   C_RESET=""
   C_BLUE=""
@@ -48,50 +47,23 @@ else
   C_DIM=""
   C_RED=""
   C_BOLD=""
-  SHOW_LOADER=0
 fi
 
-LOADER_INDEX=0
-
-print_loader_suffix() {
-  [ "$SHOW_LOADER" -eq 1 ] || return 0
-
-  local frame="-"
-  case $((LOADER_INDEX % 4)) in
-    0) frame="-" ;;
-    1) frame="\\" ;;
-    2) frame="|" ;;
-    3) frame="/" ;;
-  esac
-  LOADER_INDEX=$((LOADER_INDEX + 1))
-  printf ' %s%s%s' "$C_DIM" "$frame" "$C_RESET"
-}
-
 banner() {
-  printf '\n  %s%sAlfred%s %sInstaller%s' "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$C_RESET"
-  print_loader_suffix
-  printf '\n'
-  printf '  %s-----------------%s' "$C_DIM" "$C_RESET"
-  print_loader_suffix
-  printf '\n\n'
+  printf '\n  %s%sAlfred%s %sInstaller%s\n' "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$C_RESET"
+  printf '  %s-----------------%s\n\n' "$C_DIM" "$C_RESET"
 }
 
 step() {
-  printf '  %s->%s %s' "$C_BLUE" "$C_RESET" "$*"
-  print_loader_suffix
-  printf '\n'
+  printf '  %s->%s %s\n' "$C_BLUE" "$C_RESET" "$*"
 }
 
 ok() {
-  printf '  %sOK%s  %s' "$C_GREEN" "$C_RESET" "$*"
-  print_loader_suffix
-  printf '\n'
+  printf '  %sOK%s  %s\n' "$C_GREEN" "$C_RESET" "$*"
 }
 
 note() {
-  printf '     %s%s%s' "$C_DIM" "$*" "$C_RESET"
-  print_loader_suffix
-  printf '\n'
+  printf '     %s%s%s\n' "$C_DIM" "$*" "$C_RESET"
 }
 
 confirm_default_yes() {
