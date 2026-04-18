@@ -105,8 +105,8 @@ usage() {
 Usage: bash install.sh [options]
 
 Canonical Alfred installer entrypoint for a fresh machine or an existing checkout.
-It authenticates with GitHub if needed, clones the private Alfred repo, then hands off
-to Alfred's repo-local installer. On a first install with no Alfred DB, it
+It authenticates with GitHub if needed, clones the private Alfred repo, then runs
+Alfred's host bootstrap and product installer from that checkout. On a first install with no Alfred DB, it
 creates a fresh local DB automatically.
 
 Options:
@@ -331,9 +331,9 @@ mkdir -p "$(dirname "$REPO_DIR")" "$DATA_DIR"
 if [ ! -d "$REPO_DIR/.git" ]; then
   step "Cloning Alfred into $REPO_DIR"
   if [ -n "$BRANCH" ]; then
-    gh repo clone "$REPO_SLUG" "$REPO_DIR" -- --branch "$BRANCH"
+    run_quiet "repository clone" gh repo clone "$REPO_SLUG" "$REPO_DIR" -- --branch "$BRANCH"
   else
-    gh repo clone "$REPO_SLUG" "$REPO_DIR"
+    run_quiet "repository clone" gh repo clone "$REPO_SLUG" "$REPO_DIR"
   fi
   ok "Repository ready"
 else
@@ -341,6 +341,13 @@ else
 fi
 
 cd "$REPO_DIR"
+
+if [ ! -f "$REPO_DIR/scripts/bootstrap-host.sh" ]; then
+  fail "Expected Alfred host bootstrap at $REPO_DIR/scripts/bootstrap-host.sh"
+fi
+if [ ! -f "$REPO_DIR/scripts/install.sh" ]; then
+  fail "Expected Alfred installer at $REPO_DIR/scripts/install.sh"
+fi
 
 INSTALL_ARGS=(--repo-dir "$REPO_DIR" --data-dir "$DATA_DIR" --branch "$BRANCH")
 if [ "$MODE" = "dev" ]; then
@@ -362,10 +369,14 @@ if [ -n "$TELEGRAM_TOKEN_FILE" ]; then
   INSTALL_ARGS+=(--telegram-token-file "$TELEGRAM_TOKEN_FILE")
 fi
 
-step "Starting Alfred setup"
+step "Preparing Alfred runtime"
+
+bash "$REPO_DIR/scripts/bootstrap-host.sh"
+
+step "Installing Alfred"
 
 exec env \
   ALFRED_REPO_DIR="$REPO_DIR" \
   ALFRED_REPO_BRANCH="$BRANCH" \
   ALFRED_REPO_URL="https://github.com/$REPO_SLUG.git" \
-  ./install "${INSTALL_ARGS[@]}"
+  bash "$REPO_DIR/scripts/install.sh" "${INSTALL_ARGS[@]}"
