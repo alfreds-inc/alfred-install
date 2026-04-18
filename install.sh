@@ -85,6 +85,70 @@ run_quiet() {
   exit 1
 }
 
+repo_has_local_changes() {
+  [ -d "$REPO_DIR/.git" ] || return 1
+
+  if ! git -C "$REPO_DIR" diff --quiet --ignore-submodules --; then
+    return 0
+  fi
+  if ! git -C "$REPO_DIR" diff --cached --quiet --ignore-submodules --; then
+    return 0
+  fi
+  if [ -n "$(git -C "$REPO_DIR" ls-files --others --exclude-standard)" ]; then
+    return 0
+  fi
+
+  return 1
+}
+
+refresh_existing_repo() {
+  local current_branch head_sha remote_sha
+
+  if repo_has_local_changes; then
+    note "Existing repo has local changes; skipping automatic update."
+    return 0
+  fi
+
+  step "Refreshing Alfred checkout"
+  run_quiet "repository fetch" git -C "$REPO_DIR" fetch --prune origin
+
+  if git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+    current_branch="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [ "$current_branch" != "$BRANCH" ]; then
+      if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        run_quiet "repository checkout" git -C "$REPO_DIR" checkout "$BRANCH"
+      else
+        run_quiet "repository checkout" git -C "$REPO_DIR" checkout --track -b "$BRANCH" "origin/$BRANCH"
+      fi
+    fi
+
+    head_sha="$(git -C "$REPO_DIR" rev-parse HEAD)"
+    remote_sha="$(git -C "$REPO_DIR" rev-parse "origin/$BRANCH")"
+
+    if [ "$head_sha" = "$remote_sha" ]; then
+      ok "Repository updated"
+      return 0
+    fi
+
+    if git -C "$REPO_DIR" merge-base --is-ancestor "$head_sha" "$remote_sha"; then
+      run_quiet "repository update" git -C "$REPO_DIR" merge --ff-only "origin/$BRANCH"
+      ok "Repository updated"
+      return 0
+    fi
+
+    if git -C "$REPO_DIR" merge-base --is-ancestor "$remote_sha" "$head_sha"; then
+      note "Existing repo is ahead of origin/$BRANCH; leaving checkout unchanged."
+      return 0
+    fi
+
+    note "Existing repo diverged from origin/$BRANCH; leaving checkout unchanged."
+  else
+    run_quiet "repository checkout" git -C "$REPO_DIR" checkout "$BRANCH"
+    ok "Repository updated"
+    return 0
+  fi
+}
+
 run_with_sudo() {
   if [ -n "$SUDO" ]; then
     "$SUDO" "$@"
@@ -338,15 +402,16 @@ if [ ! -d "$REPO_DIR/.git" ]; then
   ok "Repository ready"
 else
   ok "Using existing repo at $REPO_DIR"
+  refresh_existing_repo
 fi
 
 cd "$REPO_DIR"
 
 if [ ! -f "$REPO_DIR/scripts/bootstrap-host.sh" ]; then
-  fail "Expected Alfred host bootstrap at $REPO_DIR/scripts/bootstrap-host.sh"
+  fail "Expected Alfred host bootstrap at $REPO_DIR/scripts/bootstrap-host.sh. Existing checkout may be stale; remove $REPO_DIR or clean it and rerun the installer."
 fi
 if [ ! -f "$REPO_DIR/scripts/install.sh" ]; then
-  fail "Expected Alfred installer at $REPO_DIR/scripts/install.sh"
+  fail "Expected Alfred installer at $REPO_DIR/scripts/install.sh. Existing checkout may be stale; remove $REPO_DIR or clean it and rerun the installer."
 fi
 
 INSTALL_ARGS=(--repo-dir "$REPO_DIR" --data-dir "$DATA_DIR" --branch "$BRANCH")
