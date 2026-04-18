@@ -18,6 +18,11 @@ MIGRATE_DB_PATH=""
 SKIP_OPENCLAW_WIZARD=0
 PRINT_SUMMARY_ONLY=0
 TELEGRAM_TOKEN_FILE=""
+SUDO=""
+
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo"
+fi
 
 say() {
   printf '[alfred-install] %s\n' "$*"
@@ -34,7 +39,8 @@ Usage: bash install.sh [options]
 
 Canonical Alfred installer entrypoint for a fresh machine or an existing checkout.
 It authenticates with GitHub if needed, clones the private Alfred repo, then hands off
-to Alfred's repo-local installer.
+to Alfred's repo-local installer. On a first install with no Alfred DB, it
+creates a fresh local DB automatically.
 
 Options:
   --repo-dir PATH         Target repo path (default: $DEFAULT_REPO_DIR)
@@ -42,7 +48,7 @@ Options:
   --branch NAME           Git branch to clone or refresh (default: $BRANCH)
   --dev                   Install for local development workflow
   --launchd               Generate and install a per-user LaunchAgent, then load it
-  --fresh-db              Initialize a fresh local DB when none exists
+  --fresh-db              Explicitly initialize a fresh local DB when none exists
   --migrate-db PATH       Copy an existing SQLite DB into Alfred runtime if target DB is absent
   --skip-openclaw-wizard  Provision OpenClaw workspace but skip the interactive email/Telegram wizard (CI)
   --telegram-token-file PATH
@@ -65,15 +71,64 @@ can_prompt() {
   [ -t 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]
 }
 
-ensure_github_cli() {
-  if command -v gh >/dev/null 2>&1; then
+detect_os() {
+  case "$(uname -s)" in
+    Darwin) printf 'macos\n' ;;
+    Linux)
+      if [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        case "${ID:-}${ID_LIKE:-}" in
+          *debian*|*ubuntu*) printf 'debian\n' ;;
+          *) printf 'linux-other\n' ;;
+        esac
+      else
+        printf 'linux-other\n'
+      fi
+      ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+ensure_brew() {
+  if command -v brew >/dev/null 2>&1; then
     return
   fi
 
-  command -v brew >/dev/null 2>&1 || fail "GitHub CLI is required to fetch the private Alfred repo. Install Homebrew and run 'brew install gh', or install gh manually."
+  say "Installing Homebrew (required for GitHub CLI on macOS)"
+  NONINTERACTIVE=1 /bin/bash -c \
+    "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  if [ -x /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [ -x /usr/local/bin/brew ]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+}
 
-  say "Installing GitHub CLI via Homebrew"
-  brew install gh
+ensure_github_cli() {
+  if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+    return
+  fi
+
+  case "$(detect_os)" in
+    macos)
+      ensure_brew
+      say "Installing GitHub CLI + git via Homebrew"
+      brew install gh git
+      ;;
+    debian)
+      if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
+        fail "sudo not available and not running as root. Install GitHub CLI and git manually, or run as root."
+      fi
+      say "Installing GitHub CLI + git via apt"
+      $SUDO apt-get update -yq >/dev/null
+      DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -yq --no-install-recommends \
+        ca-certificates curl git gh >/dev/null
+      ;;
+    *)
+      fail "GitHub CLI and git are required to fetch the private Alfred repo. Install them manually, then re-run."
+      ;;
+  esac
 }
 
 ensure_github_auth() {
@@ -163,6 +218,12 @@ if [ -n "$TELEGRAM_TOKEN_FILE" ] && [ ! -r "$TELEGRAM_TOKEN_FILE" ]; then
   fail "Telegram token file not readable: $TELEGRAM_TOKEN_FILE"
 fi
 
+DEFAULT_DB_PATH="$DATA_DIR/data/finance_ops.sqlite"
+if [ "$FRESH_DB" -eq 0 ] && [ -z "$MIGRATE_DB_PATH" ] && [ ! -f "$DEFAULT_DB_PATH" ]; then
+  FRESH_DB=1
+  say "No Alfred DB found at $DEFAULT_DB_PATH; defaulting to a fresh local DB for this install"
+fi
+
 if [ "$PRINT_SUMMARY_ONLY" -eq 1 ]; then
   cat <<EOF
 repo_dir=$REPO_DIR
@@ -217,4 +278,8 @@ if [ -n "$TELEGRAM_TOKEN_FILE" ]; then
   INSTALL_ARGS+=(--telegram-token-file "$TELEGRAM_TOKEN_FILE")
 fi
 
-exec ./scripts/install.sh "${INSTALL_ARGS[@]}"
+exec env \
+  ALFRED_REPO_DIR="$REPO_DIR" \
+  ALFRED_REPO_BRANCH="$BRANCH" \
+  ALFRED_REPO_URL="https://github.com/$REPO_SLUG.git" \
+  ./install "${INSTALL_ARGS[@]}"

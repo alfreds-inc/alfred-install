@@ -11,8 +11,9 @@ curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/ins
 ```
 
 The installer uses GitHub CLI to clone the private `sinapsysxyz/alfred` repo.
-If `gh` is not already authenticated, it will prompt for a GitHub token with read access to that repo.
-You can also provide it up front:
+If `gh` is not already authenticated, it prompts for a GitHub token with read access to that repo. The normal interactive flow then installs the Alfred prerequisites, prompts for `ANTHROPIC_API_KEY` / optional `OPENAI_API_KEY`, walks the OpenClaw Telegram/email wizard, and leaves you with the `alfred` CLI installed.
+
+Advanced / CI alternative if you want to provide the GitHub token up front:
 
 ```bash
 GITHUB_TOKEN=ghp_your_token_here curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/install.sh | bash
@@ -24,21 +25,27 @@ Local clone of this install repo:
 bash install.sh
 ```
 
-Common modes:
+Advanced / CI modes:
 
 ```bash
 bash install.sh --dev
-bash install.sh --fresh-db
 bash install.sh --migrate-db ~/Documents/Empresa/_Index/finance_ops.sqlite
 bash install.sh --launchd
 bash install.sh --skip-openclaw-wizard        # CI: still provisions OpenClaw, skips interactive wizard
 ```
 
-The installer clones or reuses the Alfred repo, runs Alfred's repo-local installer, installs a user-local `alfred` launcher at `~/.local/bin/alfred`, and can prompt to add `~/.local/bin` to `~/.zshrc`. OpenClaw is mandatory — every install provisions the OpenClaw workspace under `~/.openclaw/workspace/alfred`.
+The installer clones or reuses the Alfred repo, runs Alfred's repo-local bootstrap, installs a user-local `alfred` launcher at `~/.local/bin/alfred`, and can prompt to add `~/.local/bin` to `~/.zshrc`. On first install with no Alfred DB it initializes a fresh local DB automatically. OpenClaw is mandatory — every install provisions the OpenClaw workspace under `~/.openclaw/workspace/alfred`.
 
 ## Cleanup
 
-Fully remove Alfred from a machine (repo, data dir, watch dir, CLI launcher, launchd/systemd units, OpenClaw workspace, secrets):
+After Alfred is installed, the normal uninstall path is:
+
+```bash
+alfred cleanup --dry-run
+alfred cleanup -y
+```
+
+Public fallback if the CLI is already gone:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- -y
