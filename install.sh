@@ -14,6 +14,7 @@ BRANCH="${ALFRED_REPO_BRANCH:-main}"
 MODE="prod"
 INSTALL_LAUNCHD=0
 FRESH_DB=0
+AUTO_FRESH_DB=0
 MIGRATE_DB_PATH=""
 SKIP_OPENCLAW_WIZARD=0
 PRINT_SUMMARY_ONLY=0
@@ -24,13 +25,79 @@ if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
   SUDO="sudo"
 fi
 
-say() {
-  printf '[alfred-install] %s\n' "$*"
+# Pretty output
+if [ -t 1 ]; then
+  C_RESET=$'\033[0m'
+  C_BLUE=$'\033[38;5;75m'
+  C_GREEN=$'\033[38;5;114m'
+  C_DIM=$'\033[2m'
+  C_RED=$'\033[31m'
+  C_BOLD=$'\033[1m'
+else
+  C_RESET=""
+  C_BLUE=""
+  C_GREEN=""
+  C_DIM=""
+  C_RED=""
+  C_BOLD=""
+fi
+
+banner() {
+  printf '\n  %s%sAlfred%s %sInstaller%s\n' "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$C_RESET"
+  printf '  %s-----------------%s\n\n' "$C_DIM" "$C_RESET"
+}
+
+step() {
+  printf '  %s->%s %s\n' "$C_BLUE" "$C_RESET" "$*"
+}
+
+ok() {
+  printf '  %sOK%s  %s\n' "$C_GREEN" "$C_RESET" "$*"
+}
+
+note() {
+  printf '     %s%s%s\n' "$C_DIM" "$*" "$C_RESET"
 }
 
 fail() {
-  printf '[alfred-install] ERROR: %s\n' "$*" >&2
+  printf '  %sERROR:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2
   exit 1
+}
+
+run_quiet() {
+  local label="$1"
+  shift
+  local log_file persisted_log
+  log_file="$(mktemp "${TMPDIR:-/tmp}/alfred-install.XXXXXX")"
+  persisted_log="${log_file}.log"
+
+  if "$@" >"$log_file" 2>&1; then
+    rm -f "$log_file"
+    return 0
+  fi
+
+  mv "$log_file" "$persisted_log"
+  printf '\n' >&2
+  printf '  %sERROR:%s %s failed\n' "$C_RED" "$C_RESET" "$label" >&2
+  printf '  %sRecent output:%s\n' "$C_DIM" "$C_RESET" >&2
+  tail -n 80 "$persisted_log" >&2 || true
+  printf '  %sFull log:%s %s\n' "$C_DIM" "$C_RESET" "$persisted_log" >&2
+  exit 1
+}
+
+run_with_sudo() {
+  if [ -n "$SUDO" ]; then
+    "$SUDO" "$@"
+  else
+    "$@"
+  fi
+}
+
+ensure_sudo_session() {
+  if [ -n "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
+    note "Administrator access is required for system packages."
+    $SUDO -v
+  fi
 }
 
 usage() {
@@ -92,10 +159,11 @@ detect_os() {
 
 ensure_brew() {
   if command -v brew >/dev/null 2>&1; then
+    ok "Homebrew ready"
     return
   fi
 
-  say "Installing Homebrew (required for GitHub CLI on macOS)"
+  step "Installing Homebrew"
   NONINTERACTIVE=1 /bin/bash -c \
     "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   if [ -x /opt/homebrew/bin/brew ]; then
@@ -103,27 +171,34 @@ ensure_brew() {
   elif [ -x /usr/local/bin/brew ]; then
     eval "$(/usr/local/bin/brew shellenv)"
   fi
+  ok "Homebrew ready"
 }
 
 ensure_github_cli() {
   if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+    ok "GitHub CLI and git ready"
     return
   fi
 
   case "$(detect_os)" in
     macos)
       ensure_brew
-      say "Installing GitHub CLI + git via Homebrew"
+      step "Installing GitHub CLI and git"
+      note "Using Homebrew."
       brew install gh git
+      ok "GitHub CLI and git ready"
       ;;
     debian)
       if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         fail "sudo not available and not running as root. Install GitHub CLI and git manually, or run as root."
       fi
-      say "Installing GitHub CLI + git via apt"
-      $SUDO apt-get update -yq >/dev/null
-      DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -yq --no-install-recommends \
-        ca-certificates curl git gh >/dev/null
+      step "Installing GitHub CLI and git"
+      note "Using apt on Debian/Ubuntu. This can take a minute on a fresh machine."
+      ensure_sudo_session
+      run_quiet "apt package index update" run_with_sudo apt-get update -yq
+      run_quiet "GitHub CLI and git installation" run_with_sudo env DEBIAN_FRONTEND=noninteractive \
+        apt-get install -yq --no-install-recommends ca-certificates curl git gh
+      ok "GitHub CLI and git ready"
       ;;
     *)
       fail "GitHub CLI and git are required to fetch the private Alfred repo. Install them manually, then re-run."
@@ -133,7 +208,7 @@ ensure_github_cli() {
 
 ensure_github_auth() {
   if gh auth status >/dev/null 2>&1; then
-    say "GitHub CLI already authenticated"
+    ok "GitHub authenticated"
     gh auth setup-git >/dev/null 2>&1 || true
     return
   fi
@@ -143,6 +218,7 @@ ensure_github_auth() {
       fail "GitHub authentication is required to fetch $REPO_SLUG. Re-run with GITHUB_TOKEN set to a token that has repo read access."
     fi
 
+    note "A GitHub token with read access to $REPO_SLUG is required."
     printf '  GitHub token for %s: ' "$REPO_SLUG" > /dev/tty
     read -rs GITHUB_TOKEN < /dev/tty || true
     printf '\n' > /dev/tty
@@ -150,9 +226,10 @@ ensure_github_auth() {
     [ -n "$GITHUB_TOKEN" ] || fail "GitHub token is required to fetch the private Alfred repo."
   fi
 
-  say "Authenticating GitHub CLI"
+  step "Authenticating GitHub"
   gh auth login --hostname github.com --with-token <<< "$GITHUB_TOKEN" >/dev/null
   gh auth setup-git >/dev/null 2>&1 || true
+  ok "GitHub authenticated"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -221,7 +298,7 @@ fi
 DEFAULT_DB_PATH="$DATA_DIR/data/finance_ops.sqlite"
 if [ "$FRESH_DB" -eq 0 ] && [ -z "$MIGRATE_DB_PATH" ] && [ ! -f "$DEFAULT_DB_PATH" ]; then
   FRESH_DB=1
-  say "No Alfred DB found at $DEFAULT_DB_PATH; defaulting to a fresh local DB for this install"
+  AUTO_FRESH_DB=1
 fi
 
 if [ "$PRINT_SUMMARY_ONLY" -eq 1 ]; then
@@ -240,20 +317,27 @@ EOF
   exit 0
 fi
 
+banner
+
+if [ "$AUTO_FRESH_DB" -eq 1 ]; then
+  note "Fresh install detected. Alfred will create a local database at $DEFAULT_DB_PATH."
+fi
+
 ensure_github_cli
 ensure_github_auth
 need_cmd git
 mkdir -p "$(dirname "$REPO_DIR")" "$DATA_DIR"
 
 if [ ! -d "$REPO_DIR/.git" ]; then
-  say "Cloning $REPO_SLUG into $REPO_DIR"
+  step "Cloning Alfred into $REPO_DIR"
   if [ -n "$BRANCH" ]; then
     gh repo clone "$REPO_SLUG" "$REPO_DIR" -- --branch "$BRANCH"
   else
     gh repo clone "$REPO_SLUG" "$REPO_DIR"
   fi
+  ok "Repository ready"
 else
-  say "Repo already exists at $REPO_DIR"
+  ok "Using existing repo at $REPO_DIR"
 fi
 
 cd "$REPO_DIR"
@@ -277,6 +361,8 @@ fi
 if [ -n "$TELEGRAM_TOKEN_FILE" ]; then
   INSTALL_ARGS+=(--telegram-token-file "$TELEGRAM_TOKEN_FILE")
 fi
+
+step "Starting Alfred setup"
 
 exec env \
   ALFRED_REPO_DIR="$REPO_DIR" \
