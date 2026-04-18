@@ -2,6 +2,10 @@
 
 Canonical dedicated installer and cleanup for Alfred.
 
+> **Architecture note:** The current installer on `main` still documents the interactive flow shipped today.
+> The locked hosted direction is for cloud installs to become infra-only, with customer setup moving into dashboard onboarding.
+> Canonical architecture constraints live in `sinapsysxyz/alfred/docs/cloud_runtime_invariants.md`.
+
 ## Install
 
 Fresh machine:
