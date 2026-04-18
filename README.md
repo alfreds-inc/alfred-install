@@ -1,97 +1,149 @@
 # Alfred Install
 
-Canonical dedicated installer and cleanup for Alfred.
+Canonical machine bootstrap and cleanup for Alfred.
 
-> **Architecture note:** The current installer on `main` still documents the interactive flow shipped today.
-> The locked hosted direction is for cloud installs to become infra-only, with customer setup moving into dashboard onboarding.
-> Canonical architecture constraints live in `sinapsysxyz/alfred/docs/cloud_runtime_invariants.md`.
+Hosted architecture constraints live in:
+- `sinapsysxyz/alfred/docs/cloud_runtime_invariants.md`
 
-## Install
+This repo owns:
+- machine bootstrap
+- repo checkout/update
+- install state and cloud bootstrap file layout
+- cleanup and decommission foundations
 
-Fresh machine:
+This repo does not own:
+- company profile collection
+- onboarding flow state
+- product secrets entry
+- browser auth
+
+## Install Modes
+
+### Local
+
+Local self-host remains the default:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/install.sh | bash
 ```
 
-The installer uses GitHub CLI to clone the private `sinapsysxyz/alfred` repo.
-If `gh` is not already authenticated, it prompts for a GitHub token with read access to that repo. The normal interactive flow then installs the Alfred prerequisites, prompts for `ANTHROPIC_API_KEY` / optional `OPENAI_API_KEY`, provisions the OpenClaw workspace, optionally configures Telegram, and leaves email setup for later with `alfred mail setup`.
-
-Advanced / CI alternative if you want to provide the GitHub token up front:
+Equivalent explicit form:
 
 ```bash
-GITHUB_TOKEN=ghp_your_token_here curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/install.sh | bash
+bash install.sh --mode local
 ```
 
-Local clone of this install repo:
+Current local installs still fetch the private `sinapsysxyz/alfred` repo through GitHub CLI and delegate into the runtime repo installer. The runtime onboarding direction is moving toward browser-driven setup; this installer should not grow new terminal-first business configuration.
+
+Useful local variants:
 
 ```bash
-bash install.sh
+bash install.sh --mode local --dev
+bash install.sh --mode local --migrate-db ~/Documents/Empresa/_Index/finance_ops.sqlite
+bash install.sh --mode local --launchd
+bash install.sh --mode local --summary
 ```
 
-Advanced / CI modes:
+### Cloud
+
+Cloud mode is operator-run VM bootstrap for hosted Alfred runtimes:
 
 ```bash
-bash install.sh --dev
-bash install.sh --migrate-db ~/Documents/Empresa/_Index/finance_ops.sqlite
-bash install.sh --launchd
-bash install.sh --skip-openclaw-wizard        # CI: still provisions OpenClaw, skips interactive OpenClaw prompts
+bash install.sh --mode cloud --enrollment-token <one-time-token>
 ```
 
-The installer clones or reuses the Alfred repo under `~/.local/opt/alfred`, runs Alfred's host bootstrap plus product installer from that checkout, installs a user-local `alfred` launcher at `~/.local/bin/alfred`, and can prompt to add `~/.local/bin` to `~/.zshrc`. On first install with no Alfred DB it initializes a fresh local DB automatically. OpenClaw is mandatory — every install provisions the OpenClaw workspace under `~/.openclaw/workspace/alfred`.
+Cloud mode is infra-only:
+- installs host prerequisites
+- enrolls the VM with Alfred Cloud
+- writes runtime cloud bootstrap files under the Alfred data dir
+- clones or updates the `alfred` runtime repo
+- delegates into the runtime installer with cloud deployment env
+
+Cloud mode does not collect:
+- company name
+- owner email
+- Telegram configuration
+- AI keys
+- other customer business settings
+
+Those belong in browser onboarding on the runtime product surface.
+
+Current scaffolding notes:
+- cloud mode is Linux-only in v1
+- the runtime repo still owns the actual hosted service wiring and health bootstrap
+- this repo now persists the installer/cloud contract so cleanup and future runtime work have a stable base
+
+Cloud-specific environment knobs:
+
+```bash
+export ALFRED_CLOUD_API_BASE_URL=https://cloud.alfred.example
+export ALFRED_CLOUD_ENROLLMENT_URL=https://cloud.alfred.example/v1/runtimes/enroll
+export ALFRED_CLOUD_MACHINE_REGION=mad
+export ALFRED_CLOUD_TUNNEL_PROVIDER=wireguard
+```
+
+Dev/test only:
+
+```bash
+export ALFRED_CLOUD_ENROLLMENT_STUB_FILE=/path/to/enrollment-response.json
+```
+
+## Installer State Files
+
+The installer now writes:
+
+- `${ALFRED_DATA_DIR}/install/install-state.env`
+  - non-secret install metadata for cleanup/supportability
+- `${ALFRED_DATA_DIR}/config/cloud-bootstrap.env`
+  - cloud runtime bootstrap env, including runtime identity/secret
+- `${ALFRED_DATA_DIR}/config/tunnel.env`
+  - cloud tunnel provider/config payload
+
+Rules:
+- `claim_url` from cloud enrollment is printed once and is not persisted to disk
+- `install-state.env` is non-secret
+- cloud bootstrap files are intended to be `0600`
 
 ## Cleanup
 
-After Alfred is installed, the normal uninstall path is:
-
-```bash
-alfred cleanup --dry-run
-alfred cleanup -y
-```
-
-Public fallback if the CLI is already gone:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- -y
-```
-
-Safer — preview first, then apply:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- --dry-run
-curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- -y
-```
-
-From a local clone of this repo:
+Default cleanup remains narrow:
 
 ```bash
 bash cleanup.sh --dry-run
 bash cleanup.sh -y
 ```
 
-Default cleanup removes only Alfred-owned state. Shared tooling (Node, pnpm, nvm, `gh`, `openclaw`) is preserved so unrelated projects keep working. Common variants:
+Remote fallback:
 
 ```bash
-bash cleanup.sh -y --keep-watch-dir            # preserve ~/Documents/Alfred
-bash cleanup.sh -y --keep-repo                 # keep the repo, wipe runtime state + .env.local
-bash cleanup.sh -y --purge-openclaw-cli        # also remove the OpenClaw CLI
-bash cleanup.sh -y --purge-telegram-token      # also remove ~/.openclaw/secrets/telegram-bot-token
-bash cleanup.sh -y --purge-all                 # everything including shared tooling
+curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- -y
 ```
 
-See `bash cleanup.sh --help` for the full flag list and environment overrides.
+Cloud-aware cleanup behavior:
+- detects install mode from `install-state.env` when present
+- reuses recorded repo/data/unit paths when present
+- attempts best-effort cloud runtime decommission before local deletion
+- supports `--keep-cloud-registration` for same-VM repair flows
 
-### Reinstall after cleanup
+Examples:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/install.sh | bash
+bash cleanup.sh -y --keep-watch-dir
+bash cleanup.sh -y --keep-cloud-registration
+bash cleanup.sh -y --purge-openclaw-cli
+bash cleanup.sh -y --purge-telegram-token
+bash cleanup.sh -y --purge-all
 ```
 
-### What cleanup does NOT touch by default
+What cleanup does not remove by default:
+- `~/.openclaw/` itself or unrelated OpenClaw workspaces
+- shared Node/pnpm/nvm/gh installs
+- Alfred Cloud tenant membership or user accounts
 
-- `~/.openclaw/` itself or any non-Alfred workspace under the OpenClaw parent dir.
-- Other users' Telegram tokens or OpenClaw secrets.
-- Shared system packages (Node, pnpm, nvm, `gh`).
-- Arbitrary paths outside the Alfred defaults — the script refuses to remove anything that doesn't look like an Alfred-owned location.
+## Help Output
 
-If you need a truly nuclear reset, `--purge-all` is the shortcut, but read `--help` before using it on a shared box.
+```bash
+bash install.sh --help
+bash cleanup.sh --help
+```

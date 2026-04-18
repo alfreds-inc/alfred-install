@@ -8,44 +8,78 @@ set -euo pipefail
 # This script is STANDALONE — it does not depend on any other file in the repo,
 # so it keeps working even as it deletes the Alfred repo checkout itself.
 #
-# Defaults are narrow: only Alfred-owned state is removed. Shared tooling
+# Defaults remain narrow: only Alfred-owned state is removed. Shared tooling
 # (Node, pnpm, nvm, gh, Alfred Intelligence CLI) is preserved unless you pass
-# an explicit --purge-* flag. Run with --dry-run first if unsure.
+# an explicit --purge-* flag.
 
-# ── Defaults (may be overridden by env + flags) ──────────────────────────────
 case "$(uname -s)" in
-  Darwin) OS_KIND="macos"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/Alfred" ;;
-  Linux)  OS_KIND="linux"; DEFAULT_DATA_DIR="$HOME/.local/share/alfred" ;;
-  *)      OS_KIND="other"; DEFAULT_DATA_DIR="$HOME/.local/share/alfred" ;;
+  Darwin) OS_KIND="macos" ;;
+  Linux)  OS_KIND="linux" ;;
+  *)      OS_KIND="other" ;;
 esac
 
-REPO_DIR="${ALFRED_REPO_DIR:-$HOME/.local/opt/alfred}"
-DATA_DIR="${ALFRED_DATA_DIR:-$DEFAULT_DATA_DIR}"
-WATCH_DIR="${ALFRED_WATCH_DIR:-$HOME/Documents/Alfred}"
-CLI_LAUNCHER_PATH="${ALFRED_CLI_LAUNCHER:-$HOME/.local/bin/alfred}"
-LOCAL_NPM_PREFIX="${ALFRED_LOCAL_NPM_PREFIX:-$HOME/.local}"
+LOCAL_DEFAULT_REPO_DIR="$HOME/.local/opt/alfred"
+LOCAL_DEFAULT_WATCH_DIR="$HOME/Documents/Alfred"
+LOCAL_DEFAULT_CLI_LAUNCHER="$HOME/.local/bin/alfred"
+LOCAL_DEFAULT_DATA_DIR="$HOME/.local/share/alfred"
 
-DEFAULT_OPENCLAW_PARENT_DIR="$HOME/.openclaw/workspace"
-OPENCLAW_PARENT_DIR="${OPENCLAW_WORKSPACE_PARENT_DIR:-${OPENCLAW_WORKSPACE_DIR:-$DEFAULT_OPENCLAW_PARENT_DIR}}"
+if [ "$OS_KIND" = "macos" ]; then
+  LOCAL_DEFAULT_DATA_DIR="$HOME/Library/Application Support/Alfred"
+fi
+
+CLOUD_DEFAULT_REPO_DIR="/opt/alfred"
+CLOUD_DEFAULT_DATA_DIR="/var/lib/alfred"
+CLOUD_DEFAULT_CLI_LAUNCHER="/usr/local/bin/alfred"
+
+INPUT_INSTALL_MODE="${ALFRED_INSTALL_MODE:-}"
+INPUT_REPO_DIR="${ALFRED_REPO_DIR:-}"
+INPUT_DATA_DIR="${ALFRED_DATA_DIR:-}"
+INPUT_WATCH_DIR="${ALFRED_WATCH_DIR:-}"
+INPUT_CLI_LAUNCHER_PATH="${ALFRED_CLI_LAUNCHER:-}"
+INPUT_INSTALL_STATE_FILE="${ALFRED_INSTALL_STATE_FILE:-}"
+INPUT_CLOUD_ENV_FILE="${ALFRED_CLOUD_ENV_FILE:-}"
+INPUT_CLOUD_DECOMMISSION_URL="${ALFRED_CLOUD_DECOMMISSION_URL:-}"
+
+INSTALL_MODE=""
+REPO_DIR=""
+DATA_DIR=""
+WATCH_DIR=""
+CLI_LAUNCHER_PATH=""
+INSTALL_STATE_FILE=""
+CLOUD_ENV_FILE=""
+OPENCLAW_PARENT_DIR="${OPENCLAW_WORKSPACE_PARENT_DIR:-${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw/workspace}}"
 OPENCLAW_WORKSPACE_DIR="$OPENCLAW_PARENT_DIR/alfred"
+SERVICE_MANAGER=""
+SERVICE_UNITS_VALUE=""
+LAUNCHD_LABELS_VALUE=""
 
-LAUNCHD_LABEL="com.sinapsys.alfred.dashboard"
-LAUNCHD_PLIST_PATH="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
-SYSTEMD_UNIT_DIR="$HOME/.config/systemd/user"
-SYSTEMD_UNITS=(alfred-api.service alfred-dashboard.service alfred-worker.service alfred-worker.timer)
+CLOUD_API_BASE_URL=""
+CLOUD_DECOMMISSION_URL=""
+CLOUD_TENANT_SLUG=""
+CLOUD_RUNTIME_ID=""
+CLOUD_RUNTIME_SECRET=""
+
+LAUNCHD_PLIST_PATH="$HOME/Library/LaunchAgents/com.sinapsys.alfred.dashboard.plist"
+SYSTEMD_USER_UNIT_DIR="$HOME/.config/systemd/user"
+SYSTEMD_SYSTEM_UNIT_DIR="/etc/systemd/system"
 
 DEFAULT_DASHBOARD_PORT="${ALFRED_DASHBOARD_PORT:-${ALFRED_PORT:-3100}}"
 DEFAULT_API_PORT="${ALFRED_API_PORT:-3101}"
-
 TELEGRAM_TOKEN_FILE="$HOME/.openclaw/secrets/telegram-bot-token"
 
-# ── Flags ────────────────────────────────────────────────────────────────────
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo"
+else
+  SUDO=""
+fi
+
 DRY_RUN=0
 YES=0
 KEEP_REPO=0
 KEEP_DATA_DIR=0
 KEEP_WATCH_DIR=0
 KEEP_OPENCLAW_WORKSPACE=0
+KEEP_CLOUD_REGISTRATION=0
 PURGE_OPENCLAW_CLI=0
 PURGE_TELEGRAM_TOKEN=0
 PURGE_NODE_TOOLS=0
@@ -56,19 +90,22 @@ Usage: bash cleanup.sh [options]
 
 Remove Alfred from this machine, thoroughly enough for a clean reinstall.
 
+The script understands both local and cloud installs. Cloud cleanup adds a
+best-effort runtime decommission step before local files are removed unless you
+pass --keep-cloud-registration.
+
 By default the script removes only Alfred-owned state:
-  • Alfred launchd plist (macOS) or systemd user units (Linux)
-  • running Alfred API/dashboard processes
-  • CLI launcher at $CLI_LAUNCHER_PATH
-  • Alfred repo checkout at $REPO_DIR
+  • Alfred launchd plist (macOS) or systemd units (Linux)
+  • running Alfred services
+  • CLI launcher
+  • Alfred repo checkout
   • repo .env.local (secrets)
-  • runtime data dir at $DATA_DIR
-  • watch dir at $WATCH_DIR
-  • Alfred Intelligence workspace at $OPENCLAW_WORKSPACE_DIR
+  • runtime data dir
+  • watch dir
+  • Alfred Intelligence workspace
 
 Shared tooling (Node, pnpm, nvm, gh, Alfred Intelligence CLI) is preserved
-unless you pass an explicit --purge-* flag, because removing it can break
-other projects on the same machine.
+unless you pass an explicit --purge-* flag.
 
 Options:
   --dry-run                      Show what would be removed, do nothing.
@@ -76,35 +113,24 @@ Options:
   --keep-repo                    Don't remove the Alfred repo checkout.
   --keep-data-dir                Don't remove the Alfred runtime data dir.
   --keep-watch-dir               Don't remove the watch directory.
-                                 Useful if it holds personal files outside
-                                 entity-specific subfolders.
   --keep-intelligence-workspace  Don't remove the Alfred Intelligence workspace.
+  --keep-cloud-registration      Cloud mode only: skip best-effort runtime decommission.
   --purge-intelligence-cli       Also remove the Alfred Intelligence CLI npm package.
   --purge-telegram-token         Also remove $TELEGRAM_TOKEN_FILE.
-                                 Only do this if Alfred was the sole intelligence
-                                 consumer on this machine.
   --purge-node-tools             Also attempt to uninstall Node, pnpm, gh.
-                                 Macros: Homebrew on macOS, apt on Linux. Best
-                                 effort; skipped on other platforms.
   --purge-all                    Shortcut: --purge-intelligence-cli
                                            --purge-telegram-token
                                            --purge-node-tools
   -h, --help                     Show this help.
 
 Environment:
-  ALFRED_REPO_DIR                Repo location   (default: $REPO_DIR)
-  ALFRED_DATA_DIR                Runtime data    (default: $DATA_DIR)
-  ALFRED_WATCH_DIR               Watch dir       (default: $WATCH_DIR)
-  ALFRED_CLI_LAUNCHER            CLI launcher    (default: $CLI_LAUNCHER_PATH)
-  OPENCLAW_WORKSPACE_PARENT_DIR  Alfred Intelligence parent dir (preferred)
-  OPENCLAW_WORKSPACE_DIR         Legacy alias for the parent dir
-
-Examples:
-  bash cleanup.sh --dry-run                 # preview only
-  bash cleanup.sh -y                        # full default cleanup, no prompts
-  bash cleanup.sh -y --keep-watch-dir       # preserve personal documents
-  bash cleanup.sh -y --purge-all            # everything including shared tooling
-  curl -fsSL https://raw.githubusercontent.com/sinapsysxyz/alfred-install/main/cleanup.sh | bash -s -- -y
+  ALFRED_INSTALL_STATE_FILE      Explicit install state file path
+  ALFRED_REPO_DIR                Repo location override
+  ALFRED_DATA_DIR                Runtime data dir override
+  ALFRED_WATCH_DIR               Watch dir override
+  ALFRED_CLI_LAUNCHER            CLI launcher override
+  ALFRED_CLOUD_ENV_FILE          Explicit cloud bootstrap env path
+  ALFRED_CLOUD_DECOMMISSION_URL  Explicit cloud decommission endpoint
 EOF
 }
 
@@ -116,6 +142,7 @@ while [ "$#" -gt 0 ]; do
     --keep-data-dir)           KEEP_DATA_DIR=1 ;;
     --keep-watch-dir)          KEEP_WATCH_DIR=1 ;;
     --keep-intelligence-workspace|--keep-openclaw-workspace) KEEP_OPENCLAW_WORKSPACE=1 ;;
+    --keep-cloud-registration) KEEP_CLOUD_REGISTRATION=1 ;;
     --purge-intelligence-cli|--purge-openclaw-cli)         PURGE_OPENCLAW_CLI=1 ;;
     --purge-telegram-token)    PURGE_TELEGRAM_TOKEN=1 ;;
     --purge-node-tools)        PURGE_NODE_TOOLS=1 ;;
@@ -134,11 +161,115 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
 say()  { printf '[alfred-cleanup] %s\n' "$*"; }
 ok()   { printf '[alfred-cleanup] \xe2\x9c\x93 %s\n' "$*"; }
 warn() { printf '[alfred-cleanup] WARN: %s\n' "$*"; }
 plan() { printf '[alfred-cleanup] plan: %s\n' "$*"; }
+
+run_with_sudo() {
+  if [ -n "$SUDO" ]; then
+    "$SUDO" "$@"
+  else
+    "$@"
+  fi
+}
+
+load_env_file() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  # shellcheck disable=SC1090
+  . "$file"
+}
+
+discover_install_state_file() {
+  if [ -n "$INPUT_INSTALL_STATE_FILE" ]; then
+    printf '%s\n' "$INPUT_INSTALL_STATE_FILE"
+    return
+  fi
+
+  if [ -n "$INPUT_DATA_DIR" ]; then
+    printf '%s\n' "$INPUT_DATA_DIR/install/install-state.env"
+    return
+  fi
+
+  if [ -f "$LOCAL_DEFAULT_DATA_DIR/install/install-state.env" ]; then
+    printf '%s\n' "$LOCAL_DEFAULT_DATA_DIR/install/install-state.env"
+    return
+  fi
+
+  if [ -f "$CLOUD_DEFAULT_DATA_DIR/install/install-state.env" ]; then
+    printf '%s\n' "$CLOUD_DEFAULT_DATA_DIR/install/install-state.env"
+    return
+  fi
+
+  printf '%s\n' "$LOCAL_DEFAULT_DATA_DIR/install/install-state.env"
+}
+
+default_install_mode() {
+  if [ -n "$INPUT_INSTALL_MODE" ]; then
+    printf '%s\n' "$INPUT_INSTALL_MODE"
+    return
+  fi
+
+  if [ -f "$CLOUD_DEFAULT_DATA_DIR/install/install-state.env" ] && [ ! -f "$LOCAL_DEFAULT_DATA_DIR/install/install-state.env" ]; then
+    printf '%s\n' "cloud"
+    return
+  fi
+
+  printf '%s\n' "local"
+}
+
+resolve_defaults() {
+  INSTALL_STATE_FILE="$(discover_install_state_file)"
+  if [ -f "$INSTALL_STATE_FILE" ]; then
+    load_env_file "$INSTALL_STATE_FILE" || true
+  fi
+
+  INSTALL_MODE="${INPUT_INSTALL_MODE:-${ALFRED_INSTALL_MODE:-$(default_install_mode)}}"
+  case "$INSTALL_MODE" in
+    local|cloud) ;;
+    *) warn "Unknown install mode '$INSTALL_MODE' in overrides/state; falling back to local."; INSTALL_MODE="local" ;;
+  esac
+
+  if [ "$INSTALL_MODE" = "cloud" ]; then
+    REPO_DIR="${INPUT_REPO_DIR:-${ALFRED_REPO_DIR:-$CLOUD_DEFAULT_REPO_DIR}}"
+    DATA_DIR="${INPUT_DATA_DIR:-${ALFRED_DATA_DIR:-$CLOUD_DEFAULT_DATA_DIR}}"
+    CLI_LAUNCHER_PATH="${INPUT_CLI_LAUNCHER_PATH:-${ALFRED_CLI_LAUNCHER:-$CLOUD_DEFAULT_CLI_LAUNCHER}}"
+    SERVICE_MANAGER="${ALFRED_SERVICE_MANAGER:-systemd-system}"
+    SERVICE_UNITS_VALUE="${ALFRED_SERVICE_UNITS:-alfred-api.service alfred-dashboard.service alfred-worker.service alfred-worker.timer alfred-proxy.service alfred-tunnel.service}"
+  else
+    REPO_DIR="${INPUT_REPO_DIR:-${ALFRED_REPO_DIR:-$LOCAL_DEFAULT_REPO_DIR}}"
+    DATA_DIR="${INPUT_DATA_DIR:-${ALFRED_DATA_DIR:-$LOCAL_DEFAULT_DATA_DIR}}"
+    CLI_LAUNCHER_PATH="${INPUT_CLI_LAUNCHER_PATH:-${ALFRED_CLI_LAUNCHER:-$LOCAL_DEFAULT_CLI_LAUNCHER}}"
+    SERVICE_MANAGER="${ALFRED_SERVICE_MANAGER:-}"
+    if [ -z "$SERVICE_MANAGER" ]; then
+      if [ "$OS_KIND" = "macos" ]; then
+        SERVICE_MANAGER="launchd"
+      elif [ "$OS_KIND" = "linux" ]; then
+        SERVICE_MANAGER="systemd-user"
+      else
+        SERVICE_MANAGER="manual"
+      fi
+    fi
+    SERVICE_UNITS_VALUE="${ALFRED_SERVICE_UNITS:-alfred-api.service alfred-dashboard.service alfred-worker.service alfred-worker.timer}"
+  fi
+
+  WATCH_DIR="${INPUT_WATCH_DIR:-${ALFRED_WATCH_DIR:-$LOCAL_DEFAULT_WATCH_DIR}}"
+  LAUNCHD_LABELS_VALUE="${ALFRED_LAUNCHD_LABELS:-com.sinapsys.alfred.dashboard}"
+  CLOUD_ENV_FILE="${INPUT_CLOUD_ENV_FILE:-${ALFRED_CLOUD_ENV_FILE:-$DATA_DIR/config/cloud-bootstrap.env}}"
+
+  if [ -f "$CLOUD_ENV_FILE" ]; then
+    load_env_file "$CLOUD_ENV_FILE" || true
+  fi
+
+  OPENCLAW_PARENT_DIR="${OPENCLAW_WORKSPACE_PARENT_DIR:-$OPENCLAW_PARENT_DIR}"
+  OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$OPENCLAW_PARENT_DIR/alfred}"
+  CLOUD_API_BASE_URL="${ALFRED_CLOUD_API_BASE_URL:-$CLOUD_API_BASE_URL}"
+  CLOUD_DECOMMISSION_URL="${INPUT_CLOUD_DECOMMISSION_URL:-${ALFRED_CLOUD_DECOMMISSION_URL:-$CLOUD_DECOMMISSION_URL}}"
+  CLOUD_TENANT_SLUG="${ALFRED_TENANT_SLUG:-$CLOUD_TENANT_SLUG}"
+  CLOUD_RUNTIME_ID="${ALFRED_RUNTIME_ID:-$CLOUD_RUNTIME_ID}"
+  CLOUD_RUNTIME_SECRET="${ALFRED_RUNTIME_SECRET:-$CLOUD_RUNTIME_SECRET}"
+}
 
 confirm() {
   local msg="$1"
@@ -155,9 +286,9 @@ confirm() {
   [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-# Run or simulate a shell command (argv form). First argument is a human label.
 run_cmd() {
-  local label="$1"; shift
+  local label="$1"
+  shift
   if [ "$DRY_RUN" -eq 1 ]; then
     plan "$label"
     return 0
@@ -165,7 +296,17 @@ run_cmd() {
   "$@"
 }
 
-# Remove a filesystem path if it exists. Refuses to touch obviously wrong paths.
+path_needs_sudo() {
+  local target="$1"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    [ -w "$target" ] && return 1
+    return 0
+  fi
+
+  [ -w "$(dirname "$target")" ] && return 1
+  return 0
+}
+
 rm_path() {
   local target="$1"
   local label="${2:-$target}"
@@ -180,39 +321,92 @@ rm_path() {
     plan "rm -rf $target ($label)"
     return 0
   fi
-  rm -rf -- "$target"
+  if path_needs_sudo "$target"; then
+    run_with_sudo rm -rf -- "$target"
+  else
+    rm -rf -- "$target"
+  fi
   ok "Removed $label ($target)"
 }
 
-# ── Discovery + summary ──────────────────────────────────────────────────────
+decommission_url() {
+  if [ -n "$CLOUD_DECOMMISSION_URL" ]; then
+    printf '%s\n' "$CLOUD_DECOMMISSION_URL"
+    return
+  fi
+
+  if [ -n "$CLOUD_API_BASE_URL" ] && [ -n "$CLOUD_RUNTIME_ID" ]; then
+    printf '%s\n' "${CLOUD_API_BASE_URL%/}/v1/runtimes/$CLOUD_RUNTIME_ID/decommission"
+  fi
+}
+
 summarize() {
   echo
   echo "Alfred cleanup plan"
   echo "==================="
-  echo "  OS:                    $OS_KIND"
+  echo "  Mode:                  $INSTALL_MODE"
+  echo "  Install state:         $INSTALL_STATE_FILE$( [ -f "$INSTALL_STATE_FILE" ] && echo ' [present]' || echo ' [missing]')"
   echo "  Repo:                  $REPO_DIR$( [ -d "$REPO_DIR/.git" ] && echo ' [present]' || echo ' [missing]')"
   echo "  Data dir:              $DATA_DIR$( [ -d "$DATA_DIR" ] && echo ' [present]' || echo ' [missing]')"
   echo "  Watch dir:             $WATCH_DIR$( [ -d "$WATCH_DIR" ] && echo ' [present]' || echo ' [missing]')"
   echo "  CLI launcher:          $CLI_LAUNCHER_PATH$( [ -e "$CLI_LAUNCHER_PATH" ] && echo ' [present]' || echo ' [missing]')"
+  echo "  Service manager:       $SERVICE_MANAGER"
+  echo "  Service units:         ${SERVICE_UNITS_VALUE:-<none>}"
   echo "  Intelligence ws:       $OPENCLAW_WORKSPACE_DIR$( [ -d "$OPENCLAW_WORKSPACE_DIR" ] && echo ' [present]' || echo ' [missing]')"
-  echo "  Intelligence parent:   $OPENCLAW_PARENT_DIR"
-  if [ "$OS_KIND" = "macos" ]; then
-    echo "  launchd plist:         $LAUNCHD_PLIST_PATH$( [ -f "$LAUNCHD_PLIST_PATH" ] && echo ' [present]' || echo ' [missing]')"
-  fi
-  if [ "$OS_KIND" = "linux" ]; then
-    echo "  systemd user units:    $SYSTEMD_UNIT_DIR/{alfred-*.service,alfred-*.timer}"
+  if [ "$INSTALL_MODE" = "cloud" ]; then
+    echo "  Cloud env:             $CLOUD_ENV_FILE$( [ -f "$CLOUD_ENV_FILE" ] && echo ' [present]' || echo ' [missing]')"
+    echo "  Tenant slug:           ${CLOUD_TENANT_SLUG:-<unknown>}"
+    echo "  Runtime id:            ${CLOUD_RUNTIME_ID:-<unknown>}"
+    echo "  Decommission URL:      $(decommission_url)"
   fi
   echo
   echo "Flags: dry_run=$DRY_RUN yes=$YES"
-  echo "       keep_repo=$KEEP_REPO keep_data=$KEEP_DATA_DIR keep_watch=$KEEP_WATCH_DIR keep_intelligence_workspace=$KEEP_OPENCLAW_WORKSPACE"
+  echo "       keep_repo=$KEEP_REPO keep_data=$KEEP_DATA_DIR keep_watch=$KEEP_WATCH_DIR keep_intelligence_workspace=$KEEP_OPENCLAW_WORKSPACE keep_cloud_registration=$KEEP_CLOUD_REGISTRATION"
   echo "       purge_intelligence_cli=$PURGE_OPENCLAW_CLI purge_telegram_token=$PURGE_TELEGRAM_TOKEN purge_node_tools=$PURGE_NODE_TOOLS"
   echo
 }
 
-# ── Stages ───────────────────────────────────────────────────────────────────
+stage_cloud_decommission() {
+  local url payload
+  [ "$INSTALL_MODE" = "cloud" ] || return 0
+  [ "$KEEP_CLOUD_REGISTRATION" -eq 0 ] || { say "Keeping cloud runtime registration (--keep-cloud-registration)"; return 0; }
 
-# Stage: stop Alfred's own foreground processes via the CLI if it's available
-# (best-effort — still works if launcher/repo are already gone).
+  url="$(decommission_url)"
+  if [ -z "$url" ]; then
+    warn "Cloud runtime registration cleanup skipped: no decommission endpoint configured."
+    return 0
+  fi
+  if [ -z "$CLOUD_RUNTIME_ID" ] || [ -z "$CLOUD_RUNTIME_SECRET" ]; then
+    warn "Cloud runtime registration cleanup skipped: runtime_id/runtime_secret not available."
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "curl not found; skipping cloud runtime decommission."
+    return 0
+  fi
+
+  payload=$(printf '{"runtime_id":"%s","tenant_slug":"%s","requested_at":"%s"}' \
+    "$CLOUD_RUNTIME_ID" "$CLOUD_TENANT_SLUG" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    plan "POST $url (best-effort cloud runtime decommission for $CLOUD_RUNTIME_ID)"
+    return 0
+  fi
+
+  say "Attempting cloud runtime decommission for $CLOUD_RUNTIME_ID"
+  if curl -fsSL \
+    -H 'Content-Type: application/json' \
+    -H "X-Alfred-Runtime-Id: $CLOUD_RUNTIME_ID" \
+    -H "X-Alfred-Runtime-Secret: $CLOUD_RUNTIME_SECRET" \
+    -X POST \
+    --data "$payload" \
+    "$url" >/dev/null 2>&1; then
+    ok "Cloud runtime registration decommissioned"
+  else
+    warn "Cloud runtime decommission failed (ignored). Host cleanup will continue."
+  fi
+}
+
 stage_stop_via_cli() {
   local bin=""
   if [ -x "$CLI_LAUNCHER_PATH" ]; then
@@ -231,72 +425,99 @@ stage_stop_via_cli() {
   "$bin" stop --force >/dev/null 2>&1 || true
 }
 
-# Stage: unload launchd plist (macOS). Idempotent.
 stage_stop_launchd() {
-  [ "$OS_KIND" = "macos" ] || return 0
-  if [ ! -f "$LAUNCHD_PLIST_PATH" ]; then
-    return 0
-  fi
-  local domain="gui/$(id -u)"
-  if [ "$DRY_RUN" -eq 1 ]; then
-    plan "launchctl bootout $domain $LAUNCHD_PLIST_PATH"
-    plan "rm $LAUNCHD_PLIST_PATH"
-    return 0
-  fi
-  say "Unloading launchd agent $LAUNCHD_LABEL"
-  launchctl bootout "$domain" "$LAUNCHD_PLIST_PATH" >/dev/null 2>&1 || true
-  rm -f "$LAUNCHD_PLIST_PATH"
-  ok "Removed launchd plist ($LAUNCHD_PLIST_PATH)"
+  local label domain plist_path
+  [ "$SERVICE_MANAGER" = "launchd" ] || return 0
+  domain="gui/$(id -u)"
+
+  for label in $LAUNCHD_LABELS_VALUE; do
+    plist_path="$HOME/Library/LaunchAgents/$label.plist"
+    [ -f "$plist_path" ] || continue
+    if [ "$DRY_RUN" -eq 1 ]; then
+      plan "launchctl bootout $domain $plist_path"
+      plan "rm $plist_path"
+      continue
+    fi
+    say "Unloading launchd agent $label"
+    launchctl bootout "$domain" "$plist_path" >/dev/null 2>&1 || true
+    rm -f "$plist_path"
+    ok "Removed launchd plist ($plist_path)"
+  done
 }
 
-# Stage: stop and remove systemd user units (Linux). Idempotent.
 stage_stop_systemd() {
-  [ "$OS_KIND" = "linux" ] || return 0
+  local unit any unit_dir
+  case "$SERVICE_MANAGER" in
+    systemd-user) unit_dir="$SYSTEMD_USER_UNIT_DIR" ;;
+    systemd-system) unit_dir="$SYSTEMD_SYSTEM_UNIT_DIR" ;;
+    *) return 0 ;;
+  esac
+
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
 
-  # Only act if any of our unit files exist — avoids noisy "not found" output
-  # on machines that never installed systemd units.
-  local any=0
-  local unit
-  for unit in "${SYSTEMD_UNITS[@]}"; do
-    if [ -f "$SYSTEMD_UNIT_DIR/$unit" ]; then
+  any=0
+  for unit in $SERVICE_UNITS_VALUE; do
+    if [ -f "$unit_dir/$unit" ]; then
       any=1
       break
     fi
   done
-  if [ "$any" -eq 0 ]; then
+  if [ "$any" -eq 0 ] && [ "$SERVICE_MANAGER" = "systemd-user" ]; then
     return 0
   fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
-    plan "systemctl --user disable --now ${SYSTEMD_UNITS[*]}"
-    for unit in "${SYSTEMD_UNITS[@]}"; do
-      [ -f "$SYSTEMD_UNIT_DIR/$unit" ] && plan "rm $SYSTEMD_UNIT_DIR/$unit"
+    if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+      plan "systemctl disable --now $SERVICE_UNITS_VALUE"
+    else
+      plan "systemctl --user disable --now $SERVICE_UNITS_VALUE"
+    fi
+    for unit in $SERVICE_UNITS_VALUE; do
+      [ -f "$unit_dir/$unit" ] && plan "rm $unit_dir/$unit"
     done
-    plan "systemctl --user daemon-reload"
+    if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+      plan "systemctl daemon-reload"
+    else
+      plan "systemctl --user daemon-reload"
+    fi
     return 0
   fi
 
-  say "Stopping + disabling Alfred systemd user units"
-  systemctl --user disable --now "${SYSTEMD_UNITS[@]}" >/dev/null 2>&1 || true
-  for unit in "${SYSTEMD_UNITS[@]}"; do
-    if [ -f "$SYSTEMD_UNIT_DIR/$unit" ]; then
-      rm -f "$SYSTEMD_UNIT_DIR/$unit"
-      ok "Removed $SYSTEMD_UNIT_DIR/$unit"
+  say "Stopping + disabling Alfred systemd units"
+  if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+    run_with_sudo systemctl disable --now $SERVICE_UNITS_VALUE >/dev/null 2>&1 || true
+  else
+    systemctl --user disable --now $SERVICE_UNITS_VALUE >/dev/null 2>&1 || true
+  fi
+
+  for unit in $SERVICE_UNITS_VALUE; do
+    if [ -f "$unit_dir/$unit" ]; then
+      if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+        run_with_sudo rm -f "$unit_dir/$unit"
+      else
+        rm -f "$unit_dir/$unit"
+      fi
+      ok "Removed $unit_dir/$unit"
     fi
   done
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
+
+  if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+    run_with_sudo systemctl daemon-reload >/dev/null 2>&1 || true
+  else
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+  fi
 }
 
-# Stage: nothing listened on Alfred ports? Good. If something does, and
-# it looks like it belongs to this user, give it SIGTERM. Best-effort.
 stage_free_ports() {
-  local port
+  local port pids="" pid
+  command -v lsof >/dev/null 2>&1 || return 0
+
   for port in "$DEFAULT_DASHBOARD_PORT" "$DEFAULT_API_PORT"; do
-    local pids=""
-    if command -v lsof >/dev/null 2>&1; then
+    if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+      pids="$(run_with_sudo lsof -ti "tcp:$port" 2>/dev/null || true)"
+    else
       pids="$(lsof -ti "tcp:$port" -a -u "$USER" 2>/dev/null || true)"
     fi
     [ -n "$pids" ] || continue
@@ -305,47 +526,57 @@ stage_free_ports() {
       continue
     fi
     say "Killing leftover process on :$port (pids: $(echo "$pids" | tr '\n' ' '))"
-    echo "$pids" | xargs -r kill 2>/dev/null || true
-    # Give 2s to exit, then SIGKILL if needed.
+    if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+      for pid in $pids; do
+        run_with_sudo kill "$pid" 2>/dev/null || true
+      done
+    else
+      for pid in $pids; do
+        kill "$pid" 2>/dev/null || true
+      done
+    fi
     sleep 2
-    pids="$(lsof -ti "tcp:$port" -a -u "$USER" 2>/dev/null || true)"
+    if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+      pids="$(run_with_sudo lsof -ti "tcp:$port" 2>/dev/null || true)"
+    else
+      pids="$(lsof -ti "tcp:$port" -a -u "$USER" 2>/dev/null || true)"
+    fi
     if [ -n "$pids" ]; then
-      echo "$pids" | xargs -r kill -9 2>/dev/null || true
+      if [ "$SERVICE_MANAGER" = "systemd-system" ]; then
+        for pid in $pids; do
+          run_with_sudo kill -9 "$pid" 2>/dev/null || true
+        done
+      else
+        for pid in $pids; do
+          kill -9 "$pid" 2>/dev/null || true
+        done
+      fi
     fi
   done
 }
 
-# Stage: remove the CLI launcher. Only touches the one exact path.
 stage_remove_cli_launcher() {
   rm_path "$CLI_LAUNCHER_PATH" "CLI launcher"
 }
 
-# Stage: remove repo .env.local explicitly BEFORE removing the repo itself,
-# so that even with --keep-repo the file (which contains secrets) is gone.
 stage_remove_env_local() {
   local env_file="$REPO_DIR/.env.local"
   rm_path "$env_file" "repo .env.local"
 }
 
-# Stage: remove data dir (pidfiles, sqlite db, logs, exports, backups).
 stage_remove_data_dir() {
   [ "$KEEP_DATA_DIR" -eq 0 ] || { say "Keeping data dir (--keep-data-dir)"; return 0; }
   rm_path "$DATA_DIR" "data dir"
 }
 
-# Stage: remove watch dir (entity subfolders, _Staging, etc.).
 stage_remove_watch_dir() {
   [ "$KEEP_WATCH_DIR" -eq 0 ] || { say "Keeping watch dir (--keep-watch-dir)"; return 0; }
   rm_path "$WATCH_DIR" "watch dir"
 }
 
-# Stage: remove Alfred's OpenClaw workspace subdir only. Never touches the
-# parent (`~/.openclaw/`) or other workspaces siblings may own.
 stage_remove_openclaw_workspace() {
   [ "$KEEP_OPENCLAW_WORKSPACE" -eq 0 ] || { say "Keeping Alfred Intelligence workspace (--keep-intelligence-workspace)"; return 0; }
 
-  # Narrow invariant: only remove when the path actually ends in /alfred.
-  # Anything else means the user is using a custom layout we don't recognize.
   case "$OPENCLAW_WORKSPACE_DIR" in
     */alfred) ;;
     *)
@@ -356,8 +587,6 @@ stage_remove_openclaw_workspace() {
   rm_path "$OPENCLAW_WORKSPACE_DIR" "Alfred Intelligence workspace"
 }
 
-# Stage: remove the Alfred repo checkout. Only if it actually looks like a git
-# checkout of Alfred — refuses to nuke a random directory.
 stage_remove_repo() {
   [ "$KEEP_REPO" -eq 0 ] || { say "Keeping repo (--keep-repo)"; return 0; }
   if [ ! -d "$REPO_DIR" ]; then
@@ -367,7 +596,6 @@ stage_remove_repo() {
     warn "Repo dir $REPO_DIR is not a git checkout; skipping to stay safe."
     return 0
   fi
-  # Extra sanity: look for an Alfred marker file so we don't nuke the wrong repo.
   if [ ! -f "$REPO_DIR/scripts/install.sh" ] && [ ! -f "$REPO_DIR/scripts/install-openclaw.sh" ]; then
     warn "Repo at $REPO_DIR does not look like the Alfred repo (missing scripts/install.sh); skipping."
     return 0
@@ -375,7 +603,6 @@ stage_remove_repo() {
   rm_path "$REPO_DIR" "Alfred repo checkout"
 }
 
-# Stage: optional purges — shared tooling.
 stage_purge_openclaw_cli() {
   [ "$PURGE_OPENCLAW_CLI" -eq 1 ] || return 0
   if ! command -v npm >/dev/null 2>&1; then
@@ -388,7 +615,7 @@ stage_purge_openclaw_cli() {
     return 0
   fi
   say "Uninstalling Alfred Intelligence CLI"
-  npm uninstall -g --prefix "$LOCAL_NPM_PREFIX" openclaw >/dev/null 2>&1 \
+  npm uninstall -g --prefix "$HOME/.local" openclaw >/dev/null 2>&1 \
     || npm uninstall -g openclaw >/dev/null 2>&1 \
     || warn "npm uninstall failed (ignored)"
 }
@@ -422,8 +649,8 @@ stage_purge_node_tools() {
           return 0
         fi
         say "Uninstalling nodejs, gh via apt-get (best effort)"
-        sudo apt-get remove --purge -y nodejs gh >/dev/null 2>&1 || true
-        sudo apt-get autoremove --purge -y      >/dev/null 2>&1 || true
+        run_with_sudo apt-get remove --purge -y nodejs gh >/dev/null 2>&1 || true
+        run_with_sudo apt-get autoremove --purge -y >/dev/null 2>&1 || true
       else
         warn "--purge-node-tools: apt-get not found, skipping"
       fi
@@ -434,11 +661,15 @@ stage_purge_node_tools() {
   esac
 }
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+resolve_defaults
 summarize
 
 if [ "$DRY_RUN" -eq 1 ]; then
   say "Dry-run — no changes will be made."
+fi
+
+if [ "$INSTALL_MODE" = "cloud" ] && [ "$KEEP_DATA_DIR" -eq 0 ]; then
+  warn "Cloud cleanup removes VM-local onboarding state, secrets, and chat history stored on this runtime."
 fi
 
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -448,13 +679,12 @@ if [ "$DRY_RUN" -eq 0 ]; then
   fi
 fi
 
-# Stop first, then remove.
+stage_cloud_decommission
 stage_stop_via_cli
 stage_stop_launchd
 stage_stop_systemd
 stage_free_ports
 
-# Remove env file BEFORE touching the repo so --keep-repo still wipes secrets.
 stage_remove_env_local
 
 stage_remove_cli_launcher
