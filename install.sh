@@ -135,7 +135,7 @@ need_cmd() {
 }
 
 can_prompt() {
-  [ -t 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]
+  [ -r /dev/tty ] && [ -w /dev/tty ]
 }
 
 detect_os() {
