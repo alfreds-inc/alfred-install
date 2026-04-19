@@ -96,13 +96,22 @@ else
   C_BOLD=""
 fi
 
+LAST_PROGRESS_MESSAGE=""
+LAST_PROGRESS_REWIND=0
+
+remember_progress_line() {
+  LAST_PROGRESS_MESSAGE="$1"
+  LAST_PROGRESS_REWIND="${2:-0}"
+}
+
 banner() {
   printf '\n%s%sAlfred%s %sInstaller%s\n' "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$C_RESET"
   printf '%s-----------------%s\n\n' "$C_DIM" "$C_RESET"
 }
 
 step() {
-  printf '\n%s->%s %s%s%s\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$*" "$C_RESET"
+  remember_progress_line "${C_BLUE}->${C_RESET} ${C_BOLD}$*${C_RESET}" 2
+  printf '\n%s->%s %s%s%s\n\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$*" "$C_RESET"
 }
 
 ok() {
@@ -110,6 +119,7 @@ ok() {
 }
 
 note() {
+  remember_progress_line "${C_DIM}$*${C_RESET}" 1
   printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"
 }
 
@@ -142,13 +152,24 @@ run_quiet() {
   local label="$1"
   shift
   local log_file persisted_log cmd_pid cmd_status
+  local progress_message="$label"
+  local attach_to_previous=0
+  local progress_rewind=0
   log_file="$(mktemp "${TMPDIR:-/tmp}/alfred-install.XXXXXX")"
   persisted_log="${log_file}.log"
+
+  if [ -n "${LAST_PROGRESS_MESSAGE:-}" ]; then
+    progress_message="$LAST_PROGRESS_MESSAGE"
+    attach_to_previous=1
+    progress_rewind="${LAST_PROGRESS_REWIND:-0}"
+  fi
+  LAST_PROGRESS_MESSAGE=""
+  LAST_PROGRESS_REWIND=0
 
   if [ -t 1 ]; then
     "$@" >"$log_file" 2>&1 &
     cmd_pid=$!
-    spin_while_running "$cmd_pid"
+    spin_while_running "$cmd_pid" "$progress_message" "$attach_to_previous" "$progress_rewind"
     set +e
     wait "$cmd_pid"
     cmd_status=$?
@@ -174,19 +195,42 @@ run_quiet() {
   exit 1
 }
 
+render_progress_line() {
+  local message="$1"
+  local spinner="${2:-}"
+
+  if [ -n "$spinner" ]; then
+    printf '\r\033[2K%s %s%s%s\n' "$message" "$C_DIM" "$spinner" "$C_RESET"
+  else
+    printf '\r\033[2K%s\n' "$message"
+  fi
+}
+
 spin_while_running() {
   [ -t 1 ] || return 0
 
   local pid="$1"
-  local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local message="$2"
+  local attach_to_previous="${3:-0}"
+  local rewind_lines="${4:-0}"
+  local frames=('-' '\\' '|' '/')
   local i=0
   local ticks=0
   local shown=0
+  local rendered_line=0
+
+  if [ "$attach_to_previous" -eq 1 ]; then
+    rendered_line=1
+  fi
 
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$ticks" -ge 2 ]; then
       shown=1
-      printf '\r%s%s%s %s' "$C_DIM" "${frames[$i]}" "$C_RESET" "Working..."
+      if [ "$rendered_line" -eq 1 ]; then
+        printf '\033[%sA' "$rewind_lines"
+      fi
+      render_progress_line "$message" "${frames[$i]}"
+      rendered_line=1
       i=$(( (i + 1) % ${#frames[@]} ))
     fi
     sleep 0.1
@@ -194,7 +238,8 @@ spin_while_running() {
   done
 
   if [ "$shown" -eq 1 ]; then
-    printf '\r\033[2K'
+    printf '\033[%sA' "$rewind_lines"
+    render_progress_line "$message"
   fi
 }
 
@@ -218,7 +263,7 @@ refresh_existing_repo() {
   local current_branch head_sha remote_sha
 
   if repo_has_local_changes; then
-    note "Existing repo has local changes; skipping automatic update."
+    note "Existing repo has local changes; skipping automatic update"
     return 0
   fi
 
@@ -244,9 +289,9 @@ refresh_existing_repo() {
     fi
 
     if git -C "$REPO_DIR" merge-base --is-ancestor "$head_sha" "$remote_sha"; then
-      note "Remote has a newer Alfred version available on origin/$BRANCH."
+      note "Remote has a newer Alfred version available on origin/$BRANCH"
       if ! confirm_default_yes "Update local checkout to the latest remote revision?"; then
-        note "Leaving local checkout unchanged at $(git -C "$REPO_DIR" rev-parse --short HEAD)."
+        note "Leaving local checkout unchanged at $(git -C "$REPO_DIR" rev-parse --short HEAD)"
         return 0
       fi
       run_quiet "repository update" git -C "$REPO_DIR" merge --ff-only "origin/$BRANCH"
@@ -255,11 +300,11 @@ refresh_existing_repo() {
     fi
 
     if git -C "$REPO_DIR" merge-base --is-ancestor "$remote_sha" "$head_sha"; then
-      note "Existing repo is ahead of origin/$BRANCH; leaving checkout unchanged."
+      note "Existing repo is ahead of origin/$BRANCH; leaving checkout unchanged"
       return 0
     fi
 
-    note "Existing repo diverged from origin/$BRANCH; leaving checkout unchanged."
+    note "Existing repo diverged from origin/$BRANCH; leaving checkout unchanged"
   else
     run_quiet "repository checkout" git -C "$REPO_DIR" checkout "$BRANCH"
     ok "Repository updated"
@@ -277,7 +322,7 @@ run_with_sudo() {
 
 ensure_sudo_session() {
   if [ -n "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
-    note "Administrator access is required for system packages."
+    note "Administrator access is required for system packages"
     $SUDO -v
   fi
 }
@@ -577,13 +622,13 @@ persist_tunnel_config() {
 
 warn_deprecated_flags() {
   if [ "$USER_SET_SKIP_OPENCLAW_WIZARD" -eq 1 ]; then
-    warn "--skip-intelligence-wizard is deprecated and ignored. Guided setup now runs after install via 'alfred setup'."
+    warn "--skip-intelligence-wizard is deprecated and ignored — guided setup now runs after install via 'alfred setup'"
   fi
   if [ "$USER_SET_SKIP_ENTITY_WIZARD" -eq 1 ]; then
-    warn "--skip-entity-wizard is deprecated and ignored. Run 'alfred entities setup' after install if you need it."
+    warn "--skip-entity-wizard is deprecated and ignored — run 'alfred entities setup' after install if you need it"
   fi
   if [ "$USER_SET_TELEGRAM_TOKEN_FILE" -eq 1 ]; then
-    warn "--telegram-token-file is deprecated and ignored during install. Run 'alfred telegram setup --telegram-token-file PATH' after install."
+    warn "--telegram-token-file is deprecated and ignored during install — run 'alfred telegram setup --telegram-token-file PATH' after install"
   fi
 }
 
@@ -701,7 +746,7 @@ ensure_github_cli() {
     macos)
       ensure_brew
       step "Installing GitHub CLI and git"
-      note "Using Homebrew."
+      note "Using Homebrew"
       brew install gh git
       ok "GitHub CLI and git ready"
       ;;
@@ -710,7 +755,7 @@ ensure_github_cli() {
         fail "sudo not available and not running as root. Install GitHub CLI and git manually, or run as root."
       fi
       step "Installing GitHub CLI and git"
-      note "Using apt on Debian/Ubuntu. This can take a minute on a fresh machine."
+      note "Using apt on Debian/Ubuntu"
       ensure_sudo_session
       run_quiet "apt package index update" run_with_sudo apt-get update -yq
       run_quiet "GitHub CLI and git installation" run_with_sudo env DEBIAN_FRONTEND=noninteractive \
@@ -761,7 +806,7 @@ ensure_github_auth() {
       fail "GitHub authentication is required to fetch $REPO_SLUG. Re-run with GITHUB_TOKEN set to a token that has repo read access."
     fi
 
-    note "A GitHub token with read access to $REPO_SLUG is required."
+    note "A GitHub token with read access to $REPO_SLUG is required"
     printf '  GitHub token for %s: ' "$REPO_SLUG" > /dev/tty
     read -rs GITHUB_TOKEN < /dev/tty || true
     printf '\n' > /dev/tty
@@ -862,7 +907,7 @@ maybe_load_existing_cloud_bootstrap() {
 
   if [ -n "$CLOUD_RUNTIME_ID" ] && [ -n "$CLOUD_RUNTIME_SECRET" ]; then
     CLOUD_REUSED_EXISTING_BOOTSTRAP=1
-    note "Existing cloud runtime bootstrap detected; reusing runtime_id=$CLOUD_RUNTIME_ID."
+    note "Existing cloud runtime bootstrap detected; reusing runtime_id=$CLOUD_RUNTIME_ID"
   fi
 }
 
@@ -1070,7 +1115,7 @@ print_cloud_handoff() {
     printf '    %s\n' "$CLAIM_URL"
     printf '  %sDo not store this URL in shared logs or tickets.%s\n' "$C_DIM" "$C_RESET"
   else
-    note "Cloud runtime already had stored enrollment state; no new claim URL was emitted."
+    note "Cloud runtime already had stored enrollment state; no new claim URL was emitted"
   fi
 }
 
@@ -1178,7 +1223,7 @@ banner
 warn_deprecated_flags
 
 if [ "$AUTO_FRESH_DB" -eq 1 ]; then
-  note "Fresh install detected. Alfred will create a local database at $DEFAULT_DB_PATH."
+  note "Fresh install detected — Alfred will create a local database at $DEFAULT_DB_PATH"
 fi
 
 enforce_runtime_host_constraints
