@@ -97,24 +97,24 @@ else
 fi
 
 banner() {
-  printf '\n  %s%sAlfred%s %sInstaller%s\n' "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$C_RESET"
-  printf '  %s-----------------%s\n\n' "$C_DIM" "$C_RESET"
+  printf '\n%s%sAlfred%s %sInstaller%s\n' "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$C_RESET"
+  printf '%s-----------------%s\n\n' "$C_DIM" "$C_RESET"
 }
 
 step() {
-  printf '\n  %s->%s %s%s%s\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$*" "$C_RESET"
+  printf '\n%s->%s %s%s%s\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$*" "$C_RESET"
 }
 
 ok() {
-  printf '  %sOK%s  %s\n' "$C_GREEN" "$C_RESET" "$*"
+  printf '%sOK%s  %s\n' "$C_GREEN" "$C_RESET" "$*"
 }
 
 note() {
-  printf '     %s%s%s\n' "$C_DIM" "$*" "$C_RESET"
+  printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"
 }
 
 warn() {
-  printf '  %sWARN:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2
+  printf '%sWARN:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2
 }
 
 confirm_default_yes() {
@@ -125,7 +125,7 @@ confirm_default_yes() {
     return 0
   fi
 
-  printf '  %s [Y/n]: ' "$prompt" > /dev/tty
+  printf '%s [Y/n]: ' "$prompt" > /dev/tty
   read -r response < /dev/tty || response=""
   case "${response:-y}" in
     [Nn]|[Nn][Oo]) return 1 ;;
@@ -134,7 +134,7 @@ confirm_default_yes() {
 }
 
 fail() {
-  printf '  %sERROR:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2
+  printf '%sERROR:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2
   exit 1
 }
 
@@ -152,10 +152,10 @@ run_quiet() {
 
   mv "$log_file" "$persisted_log"
   printf '\n' >&2
-  printf '  %sERROR:%s %s failed\n' "$C_RED" "$C_RESET" "$label" >&2
-  printf '  %sRecent output:%s\n' "$C_DIM" "$C_RESET" >&2
+  printf '%sERROR:%s %s failed\n' "$C_RED" "$C_RESET" "$label" >&2
+  printf '%sRecent output:%s\n' "$C_DIM" "$C_RESET" >&2
   tail -n 80 "$persisted_log" >&2 || true
-  printf '  %sFull log:%s %s\n' "$C_DIM" "$C_RESET" "$persisted_log" >&2
+  printf '%sFull log:%s %s\n' "$C_DIM" "$C_RESET" "$persisted_log" >&2
   exit 1
 }
 
