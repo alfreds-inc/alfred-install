@@ -889,9 +889,13 @@ stage_purge_openclaw_cli() {
     return 0
   fi
   say "Uninstalling Alfred Intelligence CLI"
-  npm uninstall -g --prefix "$HOME/.local" openclaw >/dev/null 2>&1 \
-    || npm uninstall -g openclaw >/dev/null 2>&1 \
-    || warn "npm uninstall failed (ignored)"
+  # Alfred ships @alfreds-inc/alfred-intelligence today; older installs shipped
+  # the unbranded upstream openclaw package. Try both so a machine carrying
+  # either one ends up clean.
+  for pkg in "@alfreds-inc/alfred-intelligence" "openclaw"; do
+    npm uninstall -g --prefix "$HOME/.local" "$pkg" >/dev/null 2>&1 || true
+    npm uninstall -g "$pkg" >/dev/null 2>&1 || true
+  done
 }
 
 stage_purge_telegram_token() {
