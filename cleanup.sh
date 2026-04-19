@@ -78,13 +78,14 @@ else
   SUDO=""
 fi
 
-if [ -t 1 ]; then
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   TTY_RESET=$'\033[0m'
   TTY_BOLD=$'\033[1m'
   TTY_DIM=$'\033[2m'
-  TTY_BLUE=$'\033[38;5;111m'
-  TTY_GREEN=$'\033[38;5;34m'
-  TTY_YELLOW=$'\033[38;5;214m'
+  TTY_BLUE=$'\033[38;5;75m'
+  TTY_GREEN=$'\033[38;5;114m'
+  TTY_YELLOW=$'\033[38;5;179m'
+  TTY_RED=$'\033[31m'
 else
   TTY_RESET=""
   TTY_BOLD=""
@@ -92,10 +93,10 @@ else
   TTY_BLUE=""
   TTY_GREEN=""
   TTY_YELLOW=""
+  TTY_RED=""
 fi
 
-CLEANUP_PREFIX="${TTY_DIM}[alfred-cleanup]${TTY_RESET}"
-CLEANUP_RULE="────────────────────────────────────────"
+CLEANUP_RULE="-----------------"
 
 fmt_path() {
   local p="${1:-}"
@@ -169,6 +170,7 @@ By default the script removes only Alfred-owned state:
   • runtime data dir
   • watch dir
   • Alfred Intelligence workspace
+  • OpenClaw home (~/.openclaw)
 
 Shared tooling (Node, pnpm, nvm, gh, Alfred Intelligence CLI) is preserved
 unless you pass an explicit --purge-* flag.
@@ -179,7 +181,7 @@ Options:
   --keep-repo                    Don't remove the Alfred repo checkout.
   --keep-data-dir                Don't remove the Alfred runtime data dir.
   --keep-watch-dir               Don't remove the watch directory.
-  --keep-intelligence-workspace  Don't remove the Alfred Intelligence workspace.
+  --keep-intelligence-workspace  Don't remove the Alfred Intelligence workspace or OpenClaw home.
   --keep-cloud-registration      Cloud mode only: skip best-effort runtime decommission.
   --purge-intelligence-cli       Also remove the Alfred Intelligence CLI npm package.
   --purge-telegram-token         Also remove $TELEGRAM_TOKEN_FILE.
@@ -219,7 +221,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     -h|--help)                 usage; exit 0 ;;
     *)
-      printf '[alfred-cleanup] ERROR: Unknown argument: %s\n' "$1" >&2
+      printf '%sERROR:%s Unknown argument: %s\n' "$TTY_RED" "$TTY_RESET" "$1" >&2
       usage >&2
       exit 1
       ;;
@@ -227,10 +229,11 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-say()  { printf '%b %s\n' "$CLEANUP_PREFIX" "$*"; }
-ok()   { printf '%b %b✓%b %s\n' "$CLEANUP_PREFIX" "$TTY_GREEN" "$TTY_RESET" "$*"; }
-warn() { printf '%b %b!%b %s\n' "$CLEANUP_PREFIX" "$TTY_YELLOW" "$TTY_RESET" "$*" >&2; }
-plan() { printf '%b %bplan%b %s\n' "$CLEANUP_PREFIX" "$TTY_DIM" "$TTY_RESET" "$*"; }
+say()  { printf '%b%s%b\n' "$TTY_DIM" "$*" "$TTY_RESET"; }
+ok()   { printf '%bOK%b  %s\n' "$TTY_GREEN" "$TTY_RESET" "$*"; }
+warn() { printf '%bWARN:%b %s\n' "$TTY_YELLOW" "$TTY_RESET" "$*" >&2; }
+plan() { printf '%bplan%b  %s\n' "$TTY_DIM" "$TTY_RESET" "$*"; }
+fail() { printf '%bERROR:%b %s\n' "$TTY_RED" "$TTY_RESET" "$*" >&2; exit 1; }
 
 run_with_sudo() {
   if [ -n "$SUDO" ]; then
@@ -435,7 +438,7 @@ menu_customize() {
     menu_row 2 "$KEEP_REPO"                 "keep-repo"                     "Don't remove the Alfred repo checkout."
     menu_row 3 "$KEEP_DATA_DIR"             "keep-data-dir"                 "Don't remove the runtime data dir (SQLite, secrets, chat)."
     menu_row 4 "$KEEP_WATCH_DIR"            "keep-watch-dir"                "Don't remove the watch directory."
-    menu_row 5 "$KEEP_OPENCLAW_WORKSPACE"   "keep-intelligence-workspace"   "Don't remove the Alfred Intelligence workspace."
+    menu_row 5 "$KEEP_OPENCLAW_WORKSPACE"   "keep-intelligence-workspace"   "Don't remove the Alfred Intelligence workspace or OpenClaw home."
     menu_row 6 "$KEEP_CLOUD_REGISTRATION"   "keep-cloud-registration"       "Cloud only: skip runtime decommission."
     menu_row 7 "$PURGE_OPENCLAW_CLI"        "purge-intelligence-cli"        "Also remove the Alfred Intelligence CLI npm package."
     menu_row 8 "$PURGE_TELEGRAM_TOKEN"      "purge-telegram-token"          "Also remove $TELEGRAM_TOKEN_FILE."
@@ -466,7 +469,7 @@ interactive_menu() {
   while true; do
     tty_header "Choose what to clean"
     printf '  1) %-18s %b%s%b\n' "Default cleanup"   "$TTY_DIM" "Remove Alfred state; keep shared tooling. (recommended)" "$TTY_RESET"
-    printf '  2) %-18s %b%s%b\n' "Keep user data"    "$TTY_DIM" "Preserve data dir, watch dir, and intelligence workspace." "$TTY_RESET"
+    printf '  2) %-18s %b%s%b\n' "Keep user data"    "$TTY_DIM" "Preserve data dir, watch dir, and OpenClaw home." "$TTY_RESET"
     printf '  3) %-18s %b%s%b\n' "Keep the repo"     "$TTY_DIM" "Preserve the Alfred repo checkout." "$TTY_RESET"
     printf '  4) %-18s %b%s%b\n' "Full purge"        "$TTY_DIM" "Default + Intelligence CLI + Telegram token + Node tools." "$TTY_RESET"
     printf '  5) %-18s %b%s%b\n' "Dry run"           "$TTY_DIM" "Preview only — no changes." "$TTY_RESET"
@@ -814,7 +817,7 @@ stage_remove_watch_dir() {
 }
 
 stage_remove_openclaw_workspace() {
-  [ "$KEEP_OPENCLAW_WORKSPACE" -eq 0 ] || { say "Keeping Alfred Intelligence workspace (--keep-intelligence-workspace)"; return 0; }
+  [ "$KEEP_OPENCLAW_WORKSPACE" -eq 0 ] || { say "Keeping Alfred Intelligence workspace and OpenClaw home (--keep-intelligence-workspace)"; return 0; }
 
   case "$OPENCLAW_WORKSPACE_DIR" in
     */alfred) ;;
@@ -827,7 +830,7 @@ stage_remove_openclaw_workspace() {
 }
 
 stage_remove_openclaw_runtime_state() {
-  if ! openclaw_runtime_owned_by_alfred; then
+  if [ "$KEEP_OPENCLAW_WORKSPACE" -eq 1 ]; then
     return 0
   fi
 
@@ -847,13 +850,14 @@ stage_remove_openclaw_runtime_state() {
     fi
   fi
 
-  rm_path "$OPENCLAW_CONFIG_FILE" "Alfred Intelligence config"
-  rm_path "$OPENCLAW_ENV_FILE" "Alfred Intelligence env file"
-
-  rm_empty_dir "$OPENCLAW_SECRETS_DIR" "Alfred Intelligence secrets dir"
-  rm_empty_dir "$OPENCLAW_PARENT_DIR" "Alfred Intelligence workspace parent"
-  rm_empty_dir "$OPENCLAW_CONFIG_DIR/workspace" "Alfred Intelligence workspace root"
-  rm_empty_dir "$OPENCLAW_CONFIG_DIR" "Alfred Intelligence home"
+  case "$OPENCLAW_CONFIG_DIR" in
+    */.openclaw)
+      rm_path "$OPENCLAW_CONFIG_DIR" "OpenClaw home"
+      ;;
+    *)
+      warn "OpenClaw home path does not end in /.openclaw — skipping to avoid removing an unrelated directory: $OPENCLAW_CONFIG_DIR"
+      ;;
+  esac
 }
 
 stage_remove_repo() {

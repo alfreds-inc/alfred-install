@@ -78,7 +78,7 @@ else
   SUDO=""
 fi
 
-if [ -t 1 ]; then
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   C_RESET=$'\033[0m'
   C_BLUE=$'\033[38;5;75m'
   C_GREEN=$'\033[38;5;114m'
@@ -141,6 +141,68 @@ confirm_default_yes() {
     [Nn]|[Nn][Oo]) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+# Reads a secret interactively from /dev/tty. Echoes one '*' per keystroke
+# while typing, handles backspace, and rewrites the line on Enter so the
+# final rendering shows the last 4 characters alongside stars (e.g.
+# "***********jd94"). Falls back to silent read when no TTY is available.
+read_secret_with_reveal() {
+  local __var="$1"
+  local prompt="$2"
+  local answer=""
+
+  if ! can_prompt; then
+    printf '%s' "$prompt"
+    read -rs answer || true
+    printf '\n'
+    printf -v "$__var" '%s' "$answer"
+    return 0
+  fi
+
+  local ch
+  printf '%s' "$prompt" > /dev/tty
+  while IFS= read -r -n1 -s ch < /dev/tty; do
+    if [ -z "$ch" ]; then
+      break
+    fi
+    case "$ch" in
+      $'\x7f'|$'\b')
+        if [ -n "$answer" ]; then
+          answer="${answer%?}"
+          printf '\b \b' > /dev/tty
+        fi
+        ;;
+      $'\x03')
+        printf '\n' > /dev/tty
+        exit 130
+        ;;
+      *)
+        answer+="$ch"
+        printf '*' > /dev/tty
+        ;;
+    esac
+  done
+
+  local len=${#answer}
+  local visible=""
+  local star_count=0
+  if [ "$len" -ge 5 ]; then
+    visible="${answer: -4}"
+    star_count=$(( len - 4 ))
+    if [ "$star_count" -gt 12 ]; then
+      star_count=12
+    fi
+  else
+    star_count="$len"
+  fi
+  local stars=""
+  if [ "$star_count" -gt 0 ]; then
+    stars="$(printf '%*s' "$star_count" '' | tr ' ' '*')"
+  fi
+  printf '\r\033[2K%s%s%s%s%s\n' "$prompt" "$C_DIM" "$stars" "$C_RESET" "$visible" > /dev/tty
+
+  printf -v "$__var" '%s' "$answer"
 }
 
 fail() {
@@ -358,7 +420,7 @@ Options:
                            'alfred setup' and the focused Alfred CLI commands.
   --skip-entity-wizard     Deprecated no-op. Entity setup moved out of the main installer.
   --telegram-token-file PATH
-                           Deprecated no-op. Run 'alfred telegram setup --telegram-token-file PATH'
+                           Deprecated no-op. Run 'alfred telegram --telegram-token-file PATH'
                            after install instead.
   --no-start               Install Alfred without starting services at the end
   --summary                Print resolved install plan and exit
@@ -625,10 +687,10 @@ warn_deprecated_flags() {
     warn "--skip-intelligence-wizard is deprecated and ignored — guided setup now runs after install via 'alfred setup'"
   fi
   if [ "$USER_SET_SKIP_ENTITY_WIZARD" -eq 1 ]; then
-    warn "--skip-entity-wizard is deprecated and ignored — run 'alfred entities setup' after install if you need it"
+    warn "--skip-entity-wizard is deprecated and ignored — run 'alfred entities' after install if you need it"
   fi
   if [ "$USER_SET_TELEGRAM_TOKEN_FILE" -eq 1 ]; then
-    warn "--telegram-token-file is deprecated and ignored during install — run 'alfred telegram setup --telegram-token-file PATH' after install"
+    warn "--telegram-token-file is deprecated and ignored during install — run 'alfred telegram --telegram-token-file PATH' after install"
   fi
 }
 
@@ -807,9 +869,7 @@ ensure_github_auth() {
     fi
 
     note "A GitHub token with read access to $REPO_SLUG is required"
-    printf '  GitHub token for %s: ' "$REPO_SLUG" > /dev/tty
-    read -rs GITHUB_TOKEN < /dev/tty || true
-    printf '\n' > /dev/tty
+    read_secret_with_reveal GITHUB_TOKEN "  GitHub token for $REPO_SLUG: "
 
     [ -n "$GITHUB_TOKEN" ] || fail "GitHub token is required to fetch the private Alfred repo."
   fi

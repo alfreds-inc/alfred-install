@@ -40,9 +40,9 @@ interactive installs, then hands the remaining product setup off to Alfred's
 guided CLI commands:
 
 ```bash
-alfred telegram setup
-alfred mail setup
-alfred entities setup
+alfred telegram
+alfred mail
+alfred entities
 ```
 
 Useful local variants:
@@ -147,12 +147,8 @@ bash cleanup.sh -y --purge-all
 ```
 
 What cleanup does not remove by default:
-- `~/.openclaw/` itself or unrelated OpenClaw workspaces
 - shared Node/pnpm/nvm/gh installs
 - Alfred Cloud tenant membership or user accounts
-
-With `--purge-all`, cleanup also removes Alfred-owned `~/.openclaw` runtime state
-and prunes `~/.openclaw/` itself when nothing unrelated is left behind.
 
 ## Help Output
 
