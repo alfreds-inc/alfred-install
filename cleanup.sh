@@ -892,6 +892,10 @@ stage_purge_openclaw_cli() {
 stage_purge_telegram_token() {
   [ "$PURGE_TELEGRAM_TOKEN" -eq 1 ] || return 0
   rm_path "$TELEGRAM_TOKEN_FILE" "Telegram bot token file"
+  rm_empty_dir "$OPENCLAW_SECRETS_DIR" "Alfred Intelligence secrets dir"
+  rm_empty_dir "$OPENCLAW_PARENT_DIR" "Alfred Intelligence workspace parent"
+  rm_empty_dir "$OPENCLAW_CONFIG_DIR/workspace" "Alfred Intelligence workspace root"
+  rm_empty_dir "$OPENCLAW_CONFIG_DIR" "Alfred Intelligence home"
 }
 
 stage_purge_node_tools() {

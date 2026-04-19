@@ -151,6 +151,9 @@ What cleanup does not remove by default:
 - shared Node/pnpm/nvm/gh installs
 - Alfred Cloud tenant membership or user accounts
 
+With `--purge-all`, cleanup also removes Alfred-owned `~/.openclaw` runtime state
+and prunes `~/.openclaw/` itself when nothing unrelated is left behind.
+
 ## Help Output
 
 ```bash
