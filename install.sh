@@ -103,6 +103,13 @@ fi
 LAST_PROGRESS_TEXT=""
 LAST_PROGRESS_REWIND=0
 
+# Print a trailing blank line on exit so the terminal always ends with
+# breathing room. TTY-gated so piped/redirected output stays clean.
+_alfred_exit_trailing_newline() {
+  [ -t 1 ] && printf '\n'
+}
+trap _alfred_exit_trailing_newline EXIT
+
 _alfred_remember_progress() {
   LAST_PROGRESS_TEXT="$1"
   LAST_PROGRESS_REWIND="${2:-0}"

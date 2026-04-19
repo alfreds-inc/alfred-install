@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap '[ -t 1 ] && printf "\n"' EXIT
 # cleanup.sh — Full cleanup of Alfred from this machine.
 #
 # Canonical public entrypoint:
