@@ -21,7 +21,6 @@ esac
 
 LOCAL_DEFAULT_REPO_DIR="$HOME/.local/opt/alfred"
 LOCAL_DEFAULT_WATCH_DIR="$HOME/Documents/Alfred"
-LOCAL_DEFAULT_CLI_LAUNCHER="$HOME/.local/bin/alfred"
 LOCAL_DEFAULT_DATA_DIR="$HOME/.local/share/alfred"
 
 if [ "$OS_KIND" = "macos" ]; then
@@ -31,6 +30,13 @@ fi
 CLOUD_DEFAULT_REPO_DIR="/opt/alfred"
 CLOUD_DEFAULT_DATA_DIR="/var/lib/alfred"
 CLOUD_DEFAULT_CLI_LAUNCHER="/usr/local/bin/alfred"
+
+default_local_cli_launcher() {
+  case "$OS_KIND:$(id -u)" in
+    linux:0) printf '%s\n' "/usr/local/bin/alfred" ;;
+    *) printf '%s\n' "$HOME/.local/bin/alfred" ;;
+  esac
+}
 
 INPUT_INSTALL_MODE="${ALFRED_INSTALL_MODE:-}"
 INPUT_REPO_DIR="${ALFRED_REPO_DIR:-}"
@@ -310,7 +316,7 @@ resolve_defaults() {
   else
     REPO_DIR="${INPUT_REPO_DIR:-${ALFRED_REPO_DIR:-$LOCAL_DEFAULT_REPO_DIR}}"
     DATA_DIR="${INPUT_DATA_DIR:-${ALFRED_DATA_DIR:-$LOCAL_DEFAULT_DATA_DIR}}"
-    CLI_LAUNCHER_PATH="${INPUT_CLI_LAUNCHER_PATH:-${ALFRED_CLI_LAUNCHER:-$LOCAL_DEFAULT_CLI_LAUNCHER}}"
+    CLI_LAUNCHER_PATH="${INPUT_CLI_LAUNCHER_PATH:-${ALFRED_CLI_LAUNCHER:-$(default_local_cli_launcher)}}"
     SERVICE_MANAGER="${ALFRED_SERVICE_MANAGER:-}"
     if [ -z "$SERVICE_MANAGER" ]; then
       if [ "$OS_KIND" = "macos" ]; then

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ORIGINAL_PATH="${PATH:-}"
+
 INSTALLER_VERSION="2026.04-cloud-scaffold"
 INSTALL_STATE_SCHEMA_VERSION="1"
 
@@ -531,7 +533,10 @@ default_watch_dir() {
 }
 
 default_local_cli_launcher() {
-  printf '%s\n' "$HOME/.local/bin/alfred"
+  case "$(uname -s):$(id -u)" in
+    Linux:0) printf '%s\n' "/usr/local/bin/alfred" ;;
+    *) printf '%s\n' "$HOME/.local/bin/alfred" ;;
+  esac
 }
 
 default_cloud_cli_launcher() {
@@ -1176,6 +1181,7 @@ invoke_runtime_install() {
   step "Installing Alfred"
   set +e
   env \
+    ALFRED_INSTALL_ORIGINAL_PATH="$ORIGINAL_PATH" \
     ALFRED_REPO_DIR="$REPO_DIR" \
     ALFRED_REPO_BRANCH="$BRANCH" \
     ALFRED_REPO_URL="https://github.com/$REPO_SLUG.git" \
