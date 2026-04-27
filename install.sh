@@ -310,14 +310,14 @@ run_quiet() {
   _alfred_forget_progress
 
   if [ -t 1 ]; then
-    "$@" >"$log_file" 2>&1 &
+    "$@" >"$log_file" 2>&1 </dev/null &
     cmd_pid=$!
     _alfred_spin_while "$cmd_pid" "$message" "$attach" "$rewind"
     set +e
     wait "$cmd_pid"
     cmd_status=$?
     set -e
-  elif "$@" >"$log_file" 2>&1; then
+  elif "$@" >"$log_file" 2>&1 </dev/null; then
     rm -f "$log_file"
     return 0
   else
@@ -834,7 +834,7 @@ ensure_brew() {
 
   step "Installing Homebrew"
   NONINTERACTIVE=1 /bin/bash -c \
-    "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null
   if [ -x /opt/homebrew/bin/brew ]; then
     eval "$(/opt/homebrew/bin/brew shellenv)"
   elif [ -x /usr/local/bin/brew ]; then
@@ -854,7 +854,7 @@ ensure_github_cli() {
       ensure_brew
       step "Installing GitHub CLI and git"
       note "Using Homebrew"
-      brew install gh git
+      run_quiet "GitHub CLI and git installation" brew install gh git
       ok "GitHub CLI and git ready"
       ;;
     debian)
@@ -885,7 +885,7 @@ ensure_jq() {
     macos)
       ensure_brew
       step "Installing jq"
-      brew install jq
+      run_quiet "jq installation" brew install jq
       ok "jq ready"
       ;;
     debian)
