@@ -982,7 +982,6 @@ stage_remove_data_dir
 stage_remove_watch_dir
 stage_remove_openclaw_workspace
 stage_remove_openclaw_runtime_state
-stage_remove_repo
 
 if [ "$PURGE_OPENCLAW_CLI" -eq 1 ] || [ "$PURGE_TELEGRAM_TOKEN" -eq 1 ] || [ "$PURGE_NODE_TOOLS" -eq 1 ]; then
   tty_header "Purging optional components"
@@ -990,6 +989,8 @@ if [ "$PURGE_OPENCLAW_CLI" -eq 1 ] || [ "$PURGE_TELEGRAM_TOKEN" -eq 1 ] || [ "$P
   stage_purge_telegram_token
   stage_purge_node_tools
 fi
+
+stage_remove_repo
 
 printf '\n'
 tty_rule
