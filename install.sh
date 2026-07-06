@@ -36,6 +36,10 @@ RAW_REPO_DIR="${ALFRED_REPO_DIR:-}"
 RAW_DATA_DIR="${ALFRED_DATA_DIR:-}"
 RAW_WATCH_DIR="${ALFRED_WATCH_DIR:-}"
 RAW_CLI_LAUNCHER_PATH="${ALFRED_CLI_LAUNCHER:-}"
+RAW_OPENCLAW_PARENT_DIR="${OPENCLAW_WORKSPACE_PARENT_DIR:-${OPENCLAW_WORKSPACE_DIR:-}}"
+RAW_INSTALL_STATE_FILE="${ALFRED_INSTALL_STATE_FILE:-}"
+RAW_CLOUD_ENV_FILE="${ALFRED_CLOUD_ENV_FILE:-}"
+RAW_TUNNEL_ENV_FILE="${ALFRED_CLOUD_TUNNEL_ENV_FILE:-}"
 REPO_DIR=""
 DATA_DIR=""
 WATCH_DIR=""
@@ -49,6 +53,8 @@ CLOUD_ENV_FILE=""
 TUNNEL_ENV_FILE=""
 INSTALL_STATUS="not_started"
 INSTALL_ID=""
+EXISTING_INSTALL_DETECTED=0
+EXISTING_INSTALL_AT=""
 INSTALL_STARTED_AT_UTC="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 CLOUD_SERVICE_USER="${ALFRED_CLOUD_SERVICE_USER:-alfred}"
@@ -562,9 +568,9 @@ resolve_mode_defaults() {
   fi
 
   WATCH_DIR="${RAW_WATCH_DIR:-$(default_watch_dir)}"
-  INSTALL_STATE_FILE="${ALFRED_INSTALL_STATE_FILE:-$DATA_DIR/install/install-state.env}"
-  CLOUD_ENV_FILE="${ALFRED_CLOUD_ENV_FILE:-$DATA_DIR/config/cloud-bootstrap.env}"
-  TUNNEL_ENV_FILE="${ALFRED_CLOUD_TUNNEL_ENV_FILE:-$DATA_DIR/config/tunnel.env}"
+  INSTALL_STATE_FILE="${RAW_INSTALL_STATE_FILE:-$DATA_DIR/install/install-state.env}"
+  CLOUD_ENV_FILE="${RAW_CLOUD_ENV_FILE:-$DATA_DIR/config/cloud-bootstrap.env}"
+  TUNNEL_ENV_FILE="${RAW_TUNNEL_ENV_FILE:-$DATA_DIR/config/tunnel.env}"
 
   if [ -z "$CLOUD_API_BASE_URL" ] && [ -n "$CLOUD_ENROLLMENT_URL" ]; then
     CLOUD_API_BASE_URL="$(derive_cloud_api_base_url_from_enrollment_url)"
@@ -643,15 +649,50 @@ load_env_file() {
 }
 
 load_existing_install_state() {
+  local stored_openclaw_parent stored_openclaw_workspace
+
   if ! load_env_file "$INSTALL_STATE_FILE"; then
     return 0
   fi
+
+  EXISTING_INSTALL_DETECTED=1
+  EXISTING_INSTALL_AT="${ALFRED_INSTALLED_AT_UTC:-}"
+
+  # Sourcing the state file clobbers OPENCLAW_WORKSPACE_DIR (the script
+  # variable shares its name with the persisted key). Capture the stored
+  # values, then restore the pre-source derivation so an env override of
+  # the parent dir keeps winning below.
+  stored_openclaw_parent="${OPENCLAW_WORKSPACE_PARENT_DIR:-}"
+  stored_openclaw_workspace="${OPENCLAW_WORKSPACE_DIR:-}"
+  OPENCLAW_WORKSPACE_DIR="$OPENCLAW_PARENT_DIR/alfred"
 
   INSTALL_ID="${ALFRED_INSTALL_ID:-$INSTALL_ID}"
   if [ "$MODE" = "cloud" ]; then
     CLOUD_TENANT_SLUG="${ALFRED_TENANT_SLUG:-$CLOUD_TENANT_SLUG}"
     CLOUD_RUNTIME_ID="${ALFRED_RUNTIME_ID:-$CLOUD_RUNTIME_ID}"
   fi
+
+  # Adopt the recorded install layout so a bare re-run converges on the
+  # existing install instead of cloning a second Alfred at this mode's
+  # default paths. Env overrides (captured in RAW_* before sourcing)
+  # always win, and a mode switch (local <-> cloud) keeps the new mode's
+  # own defaults rather than inheriting the other mode's layout.
+  if [ "${ALFRED_INSTALL_MODE:-$MODE}" != "$MODE" ]; then
+    return 0
+  fi
+  [ -z "$RAW_REPO_DIR" ] && [ -n "${ALFRED_REPO_DIR:-}" ] && REPO_DIR="$ALFRED_REPO_DIR"
+  [ -z "$RAW_DATA_DIR" ] && [ -n "${ALFRED_DATA_DIR:-}" ] && DATA_DIR="$ALFRED_DATA_DIR"
+  [ -z "$RAW_WATCH_DIR" ] && [ -n "${ALFRED_WATCH_DIR:-}" ] && WATCH_DIR="$ALFRED_WATCH_DIR"
+  [ -z "$RAW_CLI_LAUNCHER_PATH" ] && [ -n "${ALFRED_CLI_LAUNCHER:-}" ] && CLI_LAUNCHER_PATH="$ALFRED_CLI_LAUNCHER"
+  if [ -z "$RAW_OPENCLAW_PARENT_DIR" ] && [ -n "$stored_openclaw_parent" ]; then
+    OPENCLAW_PARENT_DIR="$stored_openclaw_parent"
+    OPENCLAW_WORKSPACE_DIR="${stored_openclaw_workspace:-$OPENCLAW_PARENT_DIR/alfred}"
+  fi
+  # Re-derive DATA_DIR-relative files against the adopted layout.
+  INSTALL_STATE_FILE="${RAW_INSTALL_STATE_FILE:-${ALFRED_INSTALL_STATE_FILE:-$DATA_DIR/install/install-state.env}}"
+  CLOUD_ENV_FILE="${RAW_CLOUD_ENV_FILE:-${ALFRED_CLOUD_ENV_FILE:-$DATA_DIR/config/cloud-bootstrap.env}}"
+  TUNNEL_ENV_FILE="${RAW_TUNNEL_ENV_FILE:-${ALFRED_CLOUD_TUNNEL_ENV_FILE:-$DATA_DIR/config/tunnel.env}}"
+  return 0
 }
 
 write_env_assignment() {
@@ -796,6 +837,7 @@ print_summary() {
   cat <<EOF
 installer_version=$INSTALLER_VERSION
 mode=$MODE
+existing_install=$EXISTING_INSTALL_DETECTED
 repo_dir=$REPO_DIR
 data_dir=$DATA_DIR
 watch_dir=$WATCH_DIR
@@ -1328,8 +1370,16 @@ fi
 banner
 warn_deprecated_flags
 
+if [ "$EXISTING_INSTALL_DETECTED" -eq 1 ]; then
+  note "Existing install detected (id $INSTALL_ID, installed ${EXISTING_INSTALL_AT:-unknown}) — updating in place at $REPO_DIR"
+fi
+
 if [ "$AUTO_FRESH_DB" -eq 1 ]; then
-  note "Fresh install detected — Alfred will create a local database at $DEFAULT_DB_PATH"
+  if [ "$EXISTING_INSTALL_DETECTED" -eq 1 ]; then
+    note "No local database found — Alfred will create one at $DEFAULT_DB_PATH"
+  else
+    note "Fresh install detected — Alfred will create a local database at $DEFAULT_DB_PATH"
+  fi
 fi
 
 enforce_runtime_host_constraints
