@@ -46,6 +46,7 @@ INPUT_CLI_LAUNCHER_PATH="${ALFRED_CLI_LAUNCHER:-}"
 INPUT_INSTALL_STATE_FILE="${ALFRED_INSTALL_STATE_FILE:-}"
 INPUT_CLOUD_ENV_FILE="${ALFRED_CLOUD_ENV_FILE:-}"
 INPUT_CLOUD_DECOMMISSION_URL="${ALFRED_CLOUD_DECOMMISSION_URL:-}"
+INPUT_HIMALAYA_CONFIG_FILE="${ALFRED_HIMALAYA_CONFIG_FILE:-${HIMALAYA_CONFIG_FILE:-}}"
 
 INSTALL_MODE=""
 REPO_DIR=""
@@ -54,6 +55,7 @@ WATCH_DIR=""
 CLI_LAUNCHER_PATH=""
 INSTALL_STATE_FILE=""
 CLOUD_ENV_FILE=""
+HIMALAYA_CONFIG_FILE=""
 OPENCLAW_PARENT_DIR="${OPENCLAW_WORKSPACE_PARENT_DIR:-${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw/workspace}}"
 OPENCLAW_WORKSPACE_DIR="$OPENCLAW_PARENT_DIR/alfred"
 OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"
@@ -178,6 +180,7 @@ By default the script removes only Alfred-owned state:
   • watch dir
   • Alfred Intelligence workspace
   • OpenClaw home (~/.openclaw)
+  • Alfred-managed Himalaya mail accounts (~/.config/himalaya/config.toml)
 
 Shared tooling (Node, pnpm, nvm, gh, Alfred Intelligence CLI) is preserved
 unless you pass an explicit --purge-* flag.
@@ -206,6 +209,7 @@ Environment:
   ALFRED_CLI_LAUNCHER            CLI launcher override
   ALFRED_CLOUD_ENV_FILE          Explicit cloud bootstrap env path
   ALFRED_CLOUD_DECOMMISSION_URL  Explicit cloud decommission endpoint
+  ALFRED_HIMALAYA_CONFIG_FILE    Himalaya config path override
 EOF
 }
 
@@ -345,6 +349,18 @@ resolve_defaults() {
   CLOUD_TENANT_SLUG="${ALFRED_TENANT_SLUG:-$CLOUD_TENANT_SLUG}"
   CLOUD_RUNTIME_ID="${ALFRED_RUNTIME_ID:-$CLOUD_RUNTIME_ID}"
   CLOUD_RUNTIME_SECRET="${ALFRED_RUNTIME_SECRET:-$CLOUD_RUNTIME_SECRET}"
+
+  # Alfred writes marker-fenced account blocks into the shared Himalaya config
+  # while the matching secrets live under ~/.openclaw, so cleanup must strip
+  # those blocks. Use the captured INPUT_* value (env files sourced above may
+  # have clobbered ALFRED_HIMALAYA_CONFIG_FILE/HIMALAYA_CONFIG_FILE in between).
+  HIMALAYA_CONFIG_FILE="$INPUT_HIMALAYA_CONFIG_FILE"
+  if [ -z "$HIMALAYA_CONFIG_FILE" ]; then
+    case "$INSTALL_MODE" in
+      cloud) HIMALAYA_CONFIG_FILE="$DATA_DIR/config/himalaya/config.toml" ;;
+      *)     HIMALAYA_CONFIG_FILE="$HOME/.config/himalaya/config.toml" ;;
+    esac
+  fi
 }
 
 confirm() {
@@ -601,6 +617,7 @@ summarize() {
   tty_kv "Service manager" "$SERVICE_MANAGER"
   tty_kv "Service units"   "${SERVICE_UNITS_VALUE:-<none>}"
   tty_kv "Intelligence ws" "$(fmt_path "$OPENCLAW_WORKSPACE_DIR")" "$(fmt_presence "$OPENCLAW_WORKSPACE_DIR" dir)"
+  tty_kv "Himalaya config" "$(fmt_path "$HIMALAYA_CONFIG_FILE")" "$(fmt_presence "$HIMALAYA_CONFIG_FILE" file)"
   if [ "$INSTALL_MODE" = "cloud" ]; then
     tty_kv "Cloud env"       "$(fmt_path "$CLOUD_ENV_FILE")"       "$(fmt_presence "$CLOUD_ENV_FILE" file)"
     tty_kv "Tenant slug"     "${CLOUD_TENANT_SLUG:-<unknown>}"
@@ -867,6 +884,66 @@ stage_remove_openclaw_runtime_state() {
   esac
 }
 
+stage_remove_himalaya_accounts() {
+  # This stage is tied to OpenClaw-home removal: only strip mail accounts when
+  # the secrets they authenticate against (under ~/.openclaw) are also being
+  # removed. With --keep-intelligence-workspace the accounts still work, so
+  # leave the config alone.
+  [ "${KEEP_OPENCLAW_WORKSPACE:-0}" -eq 1 ] && return 0
+
+  # Alfred writes each mail account into the shared Himalaya config as a
+  # marker-fenced block (see scripts/mail-setup.sh). Those blocks are NOT under
+  # ~/.openclaw, so removing the OpenClaw home (which carries the secrets) would
+  # otherwise leave dangling account blocks behind — a phantom inbox that a
+  # later reinstall inherits. Strip Alfred's own blocks here; leave any account
+  # a user added by hand untouched.
+  local config_file
+  config_file="${ALFRED_HIMALAYA_CONFIG_FILE:-${HIMALAYA_CONFIG_FILE:-}}"
+  if [ -z "$config_file" ]; then
+    case "${INSTALL_MODE:-local}" in
+      cloud) config_file="${DATA_DIR:-}/config/himalaya/config.toml" ;;
+      *)     config_file="$HOME/.config/himalaya/config.toml" ;;
+    esac
+  fi
+
+  [ -f "$config_file" ] || return 0
+  grep -q '^# >>> Alfred mail account: ' "$config_file" 2>/dev/null || return 0
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    plan "strip Alfred-managed mail account blocks from $config_file"
+    plan "remove $config_file if nothing outside Alfred's blocks remains"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp "${config_file}.XXXXXX")"
+  # The config holds no secrets directly, but match the 0600 convention.
+  chmod 600 "$tmp" 2>/dev/null || true
+  # ALFRED-HIMALAYA-STRIP-AWK-BEGIN
+  awk '
+    /^# >>> Alfred mail account: / { skip=1; next }
+    /^# <<< Alfred mail account: / { skip=0; next }
+    skip { next }
+    { print }
+  ' "$config_file" > "$tmp"
+  # ALFRED-HIMALAYA-STRIP-AWK-END
+
+  if grep -qE '[^[:space:]]' "$tmp"; then
+    # Survivors remain — hand-added accounts, or the user's own global Himalaya
+    # settings living outside Alfred's fences. Keep the file, drop only Alfred's
+    # blocks.
+    mv "$tmp" "$config_file"
+    chmod 600 "$config_file" 2>/dev/null || true
+    ok "Removed Alfred-managed mail accounts from $config_file"
+  else
+    # Nothing but blank lines left — Alfred owned the whole file. Remove it and
+    # prune an empty dir.
+    rm -f "$tmp" "$config_file"
+    ok "Removed Alfred-managed Himalaya config ($config_file)"
+    rmdir "$(dirname "$config_file")" 2>/dev/null || true
+  fi
+}
+
 stage_remove_repo() {
   [ "$KEEP_REPO" -eq 0 ] || { say "Keeping repo (--keep-repo)"; return 0; }
   if [ ! -d "$REPO_DIR" ]; then
@@ -982,6 +1059,7 @@ stage_remove_data_dir
 stage_remove_watch_dir
 stage_remove_openclaw_workspace
 stage_remove_openclaw_runtime_state
+stage_remove_himalaya_accounts
 
 if [ "$PURGE_OPENCLAW_CLI" -eq 1 ] || [ "$PURGE_TELEGRAM_TOKEN" -eq 1 ] || [ "$PURGE_NODE_TOOLS" -eq 1 ]; then
   tty_header "Purging optional components"
